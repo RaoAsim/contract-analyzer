@@ -10,10 +10,9 @@ import { fixtureDocData, memorySearch } from "../support/docData";
 Object.assign(process.env, {
   DATABASE_URL: "postgresql://unused",
   SUPABASE_URL: "https://example.supabase.co",
-  SUPABASE_SERVICE_ROLE_KEY: "unused",
-  LLM_BASE_URL: "https://example.invalid/v1",
-  LLM_API_KEY: "unused",
-  LLM_MODEL: "fake",
+  SUPABASE_SECRET_KEY: "unused",
+  GEMINI_API_KEY: "unused",
+  GEMINI_MODEL: "fake",
 });
 
 type Ev = { event: keyof SseEventMap; data: unknown };
@@ -58,13 +57,12 @@ function scripted(rounds: (Call[] | string | { length: true })[]): { chat: NonNu
     const r = rounds[Math.min(i, rounds.length - 1)]!;
     i++;
     const usage = { inputTokens: 100, outputTokens: 20, calls: 1 };
-    if (typeof r === "string") return { message: { role: "assistant", content: r, refusal: null }, usage, finishReason: "stop" };
-    if (!Array.isArray(r)) return { message: { role: "assistant", content: "I was going to", refusal: null }, usage, finishReason: "length" };
+    if (typeof r === "string") return { message: { role: "assistant", content: r }, usage, finishReason: "stop" };
+    if (!Array.isArray(r)) return { message: { role: "assistant", content: "I was going to" }, usage, finishReason: "length" };
     return {
       message: {
         role: "assistant",
         content: null,
-        refusal: null,
         tool_calls: r.map((c, k) => ({ id: `call_${i}_${k}`, type: "function" as const, function: { name: c.name, arguments: c.args } })),
       },
       usage,

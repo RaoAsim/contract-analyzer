@@ -1,5 +1,6 @@
 import { distance as levenshtein } from "fastest-levenshtein";
 import { z } from "zod";
+import { geminiJsonSchema } from "@/lib/llm/jsonSchema";
 import type { ChatDoc } from "@/lib/chat/chat.types";
 import { sectionAt } from "@/lib/chat/citations";
 import { CLAUSE_LABELS, CLAUSE_TYPES } from "@/lib/ingest/clauses";
@@ -319,9 +320,10 @@ export const TOOLS: AnyTool[] = [
 export const TOOL_NAMES = TOOLS.map((t) => t.name);
 
 /** OpenAI tool definitions (JSON Schema from zod v4). */
+/** Tool definitions with Gemini-compatible JSON Schema parameters. */
 export function toolSchemas(): import("@/lib/llm/llm.types").ToolDef[] {
   return TOOLS.map((t) => ({
     type: "function" as const,
-    function: { name: t.name, description: t.description, parameters: z.toJSONSchema(t.schema, { io: "input" }) as Record<string, unknown> },
+    function: { name: t.name, description: t.description, parameters: geminiJsonSchema(t.schema) },
   }));
 }

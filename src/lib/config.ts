@@ -12,17 +12,23 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required (Supabase Session pooler string)"),
   DATABASE_POOL_MAX: intWithDefault(8),
   SUPABASE_URL: z.string().url("SUPABASE_URL must be a URL like https://<ref>.supabase.co"),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, "SUPABASE_SERVICE_ROLE_KEY is required"),
+  /** Server-only secret key (sb_secret_…). The legacy service_role JWT is accepted via SUPABASE_SERVICE_ROLE_KEY. */
+  SUPABASE_SECRET_KEY: z.string().min(1, "SUPABASE_SECRET_KEY is required (Dashboard → Settings → API Keys → secret key)"),
   SUPABASE_STORAGE_BUCKET: z.string().min(1).default("documents"),
 
-  LLM_BASE_URL: z.string().url("LLM_BASE_URL must be a URL"),
-  LLM_API_KEY: z.string().min(1, "LLM_API_KEY is required"),
-  LLM_MODEL: z.string().min(1, "LLM_MODEL is required"),
-
-  EMBEDDING_BASE_URL: optionalString,
-  EMBEDDING_API_KEY: optionalString,
-  EMBEDDING_MODEL: optionalString,
-  EMBEDDING_DIMENSIONS: intWithDefault(1536),
+  GEMINI_API_KEY: z.string().min(1, "GEMINI_API_KEY is required (Google AI Studio → Get API key)"),
+  GEMINI_MODEL: z.string().min(1).default("gemini-flash-latest"),
+  /** Optional endpoint override (proxy / local test double). */
+  GEMINI_BASE_URL: optionalString.pipe(z.string().url("GEMINI_BASE_URL must be a URL").optional()),
+  /** "default" leaves the model's own default; otherwise minimal | low | medium | high (model support varies). */
+  GEMINI_THINKING_LEVEL: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.trim() ? v.trim().toUpperCase() : "LOW"))
+    .pipe(z.enum(["DEFAULT", "MINIMAL", "LOW", "MEDIUM", "HIGH"]))
+    .transform((v) => (v === "DEFAULT" ? ("default" as const) : v)),
+  /** Thinking tokens count against maxOutputTokens: this much is added to every call's visible budget. */
+  GEMINI_THINKING_HEADROOM_TOKENS: intWithDefault(2048, 0),
 
   CONTEXT_BUDGET_TOKENS: intWithDefault(20000, 2000),
   SCAN_WINDOW_TOKENS: intWithDefault(8000, 1000),
@@ -51,7 +57,10 @@ let cached: AppConfig | undefined;
  */
 export function getConfig(): AppConfig {
   if (cached) return cached;
-  const parsed = envSchema.safeParse(process.env);
+  const env = { ...process.env };
+  // Legacy name for the server key (service_role JWT) still works.
+  env.SUPABASE_SECRET_KEY ||= env.SUPABASE_SERVICE_ROLE_KEY;
+  const parsed = envSchema.safeParse(env);
   if (!parsed.success) {
     const lines = parsed.error.issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`);
     throw new Error(`Invalid environment configuration:\n${lines.join("\n")}\nSee .env.example.`);

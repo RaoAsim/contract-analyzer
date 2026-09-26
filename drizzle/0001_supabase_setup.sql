@@ -29,13 +29,18 @@ ALTER TABLE "comparisons" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "jobs" ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 
--- Private Storage bucket for original uploads. Supabase manages storage.buckets; inserting here
--- keeps setup in one place. scripts/setup-storage.ts does the same through the Storage API.
+-- Private Storage bucket for original uploads. Supabase restricts SQL on the storage schema
+-- (changelog 2025-03-18), so this is best-effort only: the server also creates the bucket through the
+-- Storage API at startup (ensureBucket), and `npm run storage:setup` does the same.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 'buckets') THEN
-    INSERT INTO storage.buckets (id, name, public)
-    VALUES ('documents', 'documents', false)
-    ON CONFLICT (id) DO NOTHING;
+    BEGIN
+      INSERT INTO storage.buckets (id, name, public)
+      VALUES ('documents', 'documents', false)
+      ON CONFLICT (id) DO NOTHING;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE NOTICE 'storage.buckets insert skipped (%); the app creates the bucket via the Storage API', SQLERRM;
+    END;
   END IF;
 END $$;

@@ -149,9 +149,9 @@ export async function runAgent(ctx: RunContext, deps: AgentDeps = {}): Promise<v
     ctx.state.usage.outputTokens += resp.usage.outputTokens;
     ctx.state.usage.calls += resp.usage.calls;
 
-    const rawCalls = (resp.message.tool_calls ?? []).filter((c): c is Extract<typeof c, { type: "function" }> => c.type === "function");
-    const calls: RawToolCall[] = rawCalls.map((c) => ({ id: c.id, name: c.function.name, arguments: c.function.arguments ?? "" }));
-    msgs.push({ role: "assistant", content: resp.message.content ?? null, ...(rawCalls.length ? { tool_calls: rawCalls } : {}) });
+    const calls: RawToolCall[] = (resp.message.tool_calls ?? []).map((c) => ({ id: c.id, name: c.function.name, arguments: c.function.arguments ?? "" }));
+    // Push the model turn as received (Gemini thought signatures must be replayed verbatim).
+    msgs.push(resp.message);
 
     if (calls.length === 0) {
       // Truncated at max tokens with no tool calls is NOT finished (§14.4) — nudge once.

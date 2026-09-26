@@ -5,11 +5,11 @@ import type { DocumentKind } from "@/types/document";
 
 let client: SupabaseClient | undefined;
 
-/** Service-role client, used ONLY for Storage and only on the server (I7). */
+/** Secret-key client (bypasses RLS), used ONLY for Storage and only on the server (I7). */
 function storage(): SupabaseClient {
   if (!client) {
     const cfg = getConfig();
-    client = createClient(cfg.SUPABASE_URL, cfg.SUPABASE_SERVICE_ROLE_KEY, {
+    client = createClient(cfg.SUPABASE_URL, cfg.SUPABASE_SECRET_KEY, {
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     });
   }

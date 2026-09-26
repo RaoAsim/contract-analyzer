@@ -1,26 +1,58 @@
 import "server-only";
-import OpenAI, { APIError } from "openai";
+import {
+  ApiError,
+  FinishReason as GeminiFinish,
+  FunctionCallingConfigMode,
+  GoogleGenAI,
+  ThinkingLevel,
+  type Content,
+  type GenerateContentConfig,
+  type GenerateContentResponse,
+  type Part,
+} from "@google/genai";
 import type { z } from "zod";
 import { getConfig } from "@/lib/config";
 import { parseWithSchema } from "./json";
-import type { CallOptions, ChatMessage, LlmUsage, StreamResult, ToolCallResult, ToolDef } from "./llm.types";
+import { geminiJsonSchema } from "./jsonSchema";
+import type {
+  AssistantMessage,
+  CallOptions,
+  ChatMessage,
+  FinishReason,
+  LlmUsage,
+  StreamResult,
+  ToolCall,
+  ToolCallResult,
+  ToolDef,
+} from "./llm.types";
 import { countTokens } from "./tokens";
 
-let client: OpenAI | undefined;
-// Provider capability flags, learned on the first rejection and kept for the process lifetime.
-const caps = { jsonMode: true, streamUsage: true };
+/**
+ * Gemini via the official Google Gen AI SDK (@google/genai), stateless `generateContent` /
+ * `generateContentStream`: the app owns conversation history, so every call sends the full context.
+ */
 
-function llm(): OpenAI {
+let client: GoogleGenAI | undefined;
+const GENERATED_ID = "gc_";
+
+function ai(): GoogleGenAI {
   if (!client) {
     const cfg = getConfig();
-    // SDK retries are disabled: we retry ourselves so the UI can show a "retrying" notice (§14.4).
-    client = new OpenAI({ apiKey: cfg.LLM_API_KEY, baseURL: cfg.LLM_BASE_URL, maxRetries: 0, timeout: 120_000 });
+    client = new GoogleGenAI({
+      apiKey: cfg.GEMINI_API_KEY,
+      httpOptions: {
+        timeout: 120_000,
+        // SDK retries off: we retry ourselves so the UI can show a "retrying" notice (§14.4).
+        retryOptions: { attempts: 1 },
+        ...(cfg.GEMINI_BASE_URL ? { baseUrl: cfg.GEMINI_BASE_URL } : {}),
+      },
+    });
   }
   return client;
 }
 
 export function modelName(): string {
-  return getConfig().LLM_MODEL;
+  return getConfig().GEMINI_MODEL;
 }
 
 export class LlmUnavailableError extends Error {
@@ -36,22 +68,19 @@ export class LlmUnavailableError extends Error {
 }
 
 export function isAbortError(err: unknown): boolean {
-  return err instanceof Error && (err.name === "AbortError" || err.name === "APIUserAbortError" || /aborted/i.test(err.message));
+  return err instanceof Error && (err.name === "AbortError" || /abort/i.test(err.message));
 }
 
 function retryable(err: unknown): boolean {
-  if (err instanceof APIError) return err.status === 429 || (err.status !== undefined && err.status >= 500) || err.status === undefined;
-  return !isAbortError(err) && err instanceof Error && /ECONNRESET|ETIMEDOUT|fetch failed|socket|timeout/i.test(err.message);
+  if (err instanceof ApiError) return err.status === 408 || err.status === 429 || err.status >= 500;
+  return !isAbortError(err) && err instanceof Error && /ECONNRESET|ETIMEDOUT|fetch failed|socket|timeout|network/i.test(err.message);
 }
 
+/** Gemini puts the suggested delay in the error body (RetryInfo.retryDelay, e.g. "12s"). */
 function retryAfterMs(err: unknown): number | null {
-  if (!(err instanceof APIError)) return null;
-  const h = err.headers?.get?.("retry-after");
-  if (!h) return null;
-  const secs = Number(h);
-  if (Number.isFinite(secs)) return Math.min(30_000, secs * 1000);
-  const date = Date.parse(h);
-  return Number.isFinite(date) ? Math.min(30_000, Math.max(0, date - Date.now())) : null;
+  if (!(err instanceof ApiError)) return null;
+  const m = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(err.message);
+  return m ? Math.min(30_000, Number(m[1]) * 1000) : null;
 }
 
 const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
@@ -63,7 +92,16 @@ const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
     });
   });
 
-/** 429/5xx → retry 3 times with exponential backoff (1 s, 2 s, 4 s) + jitter, honouring retry-after. */
+function providerMessage(err: ApiError): string {
+  if (err.status === 400 && /api key/i.test(err.message)) return "The AI provider rejected the API key.";
+  if (err.status === 401 || err.status === 403) return "The AI provider rejected the API key.";
+  if (err.status === 404) return "The configured Gemini model was not found. Check GEMINI_MODEL.";
+  if (err.status === 429) return "The AI provider is rate-limiting requests (quota reached). Please try again shortly.";
+  if (err.status >= 500) return "The AI provider is having problems. Please try again shortly.";
+  return "The AI provider returned an error.";
+}
+
+/** 408/429/5xx → retry 3 times with exponential backoff (1 s, 2 s, 4 s) + jitter, honouring retryDelay. */
 export async function withRetry<T>(fn: () => Promise<T>, opts: Pick<CallOptions, "signal" | "onRetry">, attempts = 3): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
@@ -71,22 +109,143 @@ export async function withRetry<T>(fn: () => Promise<T>, opts: Pick<CallOptions,
     } catch (err) {
       if (isAbortError(err) || opts.signal?.aborted) throw err;
       if (attempt >= attempts || !retryable(err)) {
-        if (err instanceof APIError) throw new LlmUnavailableError(providerMessage(err), err.status, err.message);
+        if (err instanceof ApiError) throw new LlmUnavailableError(providerMessage(err), err.status, err.message);
         throw err;
       }
       const delay = retryAfterMs(err) ?? 1000 * 2 ** attempt + Math.floor(Math.random() * 400);
-      opts.onRetry?.({ attempt: attempt + 1, delayMs: delay, status: err instanceof APIError ? err.status : undefined });
+      opts.onRetry?.({ attempt: attempt + 1, delayMs: delay, status: err instanceof ApiError ? err.status : undefined });
       await sleep(delay, opts.signal);
     }
   }
 }
 
-function providerMessage(err: APIError): string {
-  if (err.status === 401 || err.status === 403) return "The AI provider rejected the API key.";
-  if (err.status === 404) return "The configured AI model was not found at the provider.";
-  if (err.status === 429) return "The AI provider is rate-limiting requests. Please try again shortly.";
-  if (err.status && err.status >= 500) return "The AI provider is having problems. Please try again shortly.";
-  return "The AI provider returned an error.";
+export function isToolsRejection(err: unknown): boolean {
+  const status = err instanceof ApiError ? err.status : err instanceof LlmUnavailableError ? err.status : undefined;
+  const msg = err instanceof LlmUnavailableError ? err.detail : err instanceof Error ? err.message : "";
+  return status === 400 && /function|tool/i.test(msg);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Message conversion
+
+function parseArgs(raw: string): Record<string, unknown> {
+  try {
+    const v: unknown = JSON.parse(raw || "{}");
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : { value: v };
+  } catch {
+    return { raw };
+  }
+}
+
+function toolResponse(content: string): Record<string, unknown> {
+  try {
+    const v: unknown = JSON.parse(content);
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : { output: v };
+  } catch {
+    return { output: content };
+  }
+}
+
+/**
+ * Our messages → Gemini `systemInstruction` + `contents`. Assistant turns with tool calls replay the
+ * model's original parts (thought signatures); tool results become `functionResponse` parts in the
+ * following user turn; adjacent same-role turns are merged.
+ */
+export function toGemini(messages: ChatMessage[]): { systemInstruction?: string; contents: Content[] } {
+  const system: string[] = [];
+  const contents: Content[] = [];
+  const callNames = new Map<string, string>();
+  const push = (role: "user" | "model", parts: Part[]): void => {
+    if (parts.length === 0) return;
+    const last = contents[contents.length - 1];
+    if (last && last.role === role) last.parts = [...(last.parts ?? []), ...parts];
+    else contents.push({ role, parts });
+  };
+  for (const m of messages) {
+    switch (m.role) {
+      case "system":
+        system.push(m.content);
+        break;
+      case "user":
+        push("user", [{ text: m.content }]);
+        break;
+      case "assistant": {
+        for (const c of m.tool_calls ?? []) callNames.set(c.id, c.function.name);
+        if (m.providerParts?.length) {
+          push("model", m.providerParts as Part[]);
+          break;
+        }
+        const parts: Part[] = [];
+        if (m.content) parts.push({ text: m.content });
+        for (const c of m.tool_calls ?? []) {
+          parts.push({ functionCall: { name: c.function.name, args: parseArgs(c.function.arguments), ...(c.id.startsWith(GENERATED_ID) ? {} : { id: c.id }) } });
+        }
+        push("model", parts);
+        break;
+      }
+      case "tool":
+        push("user", [
+          {
+            functionResponse: {
+              name: callNames.get(m.tool_call_id) ?? "unknown_tool",
+              response: toolResponse(m.content),
+              ...(m.tool_call_id.startsWith(GENERATED_ID) ? {} : { id: m.tool_call_id }),
+            },
+          },
+        ]);
+        break;
+    }
+  }
+  return { systemInstruction: system.length ? system.join("\n\n") : undefined, contents };
+}
+
+function toolDeclarations(tools: ToolDef[]): NonNullable<GenerateContentConfig["tools"]> {
+  return [
+    {
+      functionDeclarations: tools.map((t) => {
+        // Parameters are already Gemini-clean (geminiJsonSchema strips $schema and unsupported keywords).
+        return { name: t.function.name, description: t.function.description, parametersJsonSchema: t.function.parameters };
+      }),
+    },
+  ];
+}
+
+function finishOf(r: GenerateContentResponse | undefined): FinishReason | null {
+  const f = r?.candidates?.[0]?.finishReason;
+  if (!f) return r?.promptFeedback?.blockReason ? "blocked" : null;
+  if (f === GeminiFinish.STOP) return "stop";
+  if (f === GeminiFinish.MAX_TOKENS) return "length";
+  if (f === GeminiFinish.RECITATION) return "recitation";
+  if (f === GeminiFinish.SAFETY || f === GeminiFinish.BLOCKLIST || f === GeminiFinish.PROHIBITED_CONTENT || f === GeminiFinish.SPII) return "blocked";
+  return String(f).toLowerCase();
+}
+
+function visibleText(parts: Part[] | undefined): string {
+  return (parts ?? [])
+    .filter((p) => typeof p.text === "string" && !p.thought)
+    .map((p) => p.text)
+    .join("");
+}
+
+function usageOf(r: GenerateContentResponse | undefined, fallbackIn: number, fallbackOut: number): LlmUsage {
+  const u = r?.usageMetadata;
+  if (!u) return { inputTokens: fallbackIn, outputTokens: fallbackOut, calls: 1 };
+  // Thinking tokens are billed as output.
+  return { inputTokens: u.promptTokenCount ?? fallbackIn, outputTokens: (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0), calls: 1 };
+}
+
+/**
+ * Base generation config. Thinking tokens count against maxOutputTokens, so the visible budget gets
+ * headroom added, and the thinking level is kept low (configurable) for cost and latency.
+ */
+function baseConfig(opts: CallOptions, visibleMax: number, defaultTemp: number): GenerateContentConfig {
+  const cfg = getConfig();
+  return {
+    temperature: opts.temperature ?? defaultTemp,
+    maxOutputTokens: (opts.maxTokens ?? visibleMax) + cfg.GEMINI_THINKING_HEADROOM_TOKENS,
+    ...(cfg.GEMINI_THINKING_LEVEL !== "default" ? { thinkingConfig: { thinkingLevel: ThinkingLevel[cfg.GEMINI_THINKING_LEVEL] } } : {}),
+    abortSignal: opts.signal,
+  };
 }
 
 function logCall(label: string, usage: LlmUsage, ms: number, extra = ""): void {
@@ -94,126 +253,73 @@ function logCall(label: string, usage: LlmUsage, ms: number, extra = ""): void {
   console.log(`[llm] ${label} model=${modelName()} in=${usage.inputTokens} out=${usage.outputTokens} ${ms}ms${extra}`);
 }
 
-function estimateInput(messages: ChatMessage[]): number {
+export function estimateMessagesTokens(messages: ChatMessage[]): number {
   let n = 0;
   for (const m of messages) {
-    const c = (m as { content?: unknown }).content;
-    if (typeof c === "string") n += countTokens(c) + 4;
-    else if (Array.isArray(c)) for (const part of c) if (typeof (part as { text?: unknown }).text === "string") n += countTokens((part as { text: string }).text);
-    const tc = (m as { tool_calls?: { function: { arguments: string } }[] }).tool_calls;
-    if (tc) for (const t of tc) n += countTokens(t.function.arguments) + 8;
+    if (typeof m.content === "string") n += countTokens(m.content) + 4;
+    if (m.role === "assistant") for (const t of m.tool_calls ?? []) n += countTokens(t.function.arguments) + 8;
   }
   return n;
 }
 
-export function estimateMessagesTokens(messages: ChatMessage[]): number {
-  return estimateInput(messages);
-}
+// ---------------------------------------------------------------------------------------------
+// Calls
 
-function rawMessage(err: unknown): string {
-  return err instanceof LlmUnavailableError ? err.detail : err instanceof Error ? err.message : "";
-}
-
-function status400(err: unknown): boolean {
-  return (err instanceof APIError || err instanceof LlmUnavailableError) && err.status === 400;
-}
-
-function isStreamOptionsRejection(err: unknown): boolean {
-  return status400(err) && /stream_options|include_usage/i.test(rawMessage(err));
-}
-
-function isJsonModeRejection(err: unknown): boolean {
-  return status400(err) && /response_format|json_object|json mode|json_schema/i.test(rawMessage(err));
-}
-
-export function isToolsRejection(err: unknown): boolean {
-  const status = err instanceof APIError ? err.status : err instanceof LlmUnavailableError ? err.status : undefined;
-  const msg = err instanceof LlmUnavailableError ? err.detail : err instanceof Error ? err.message : "";
-  return (status === 400 || status === 404 || status === 422) && /tool|function/i.test(msg);
-}
-
-/** Streamed completion. `onDelta` receives text as it arrives; usage falls back to estimates. */
+/** Streamed completion. `onDelta` receives visible text (never thoughts) as it arrives. */
 export async function streamChat(messages: ChatMessage[], onDelta: (t: string) => void, opts: CallOptions): Promise<StreamResult> {
   const started = Date.now();
+  const { systemInstruction, contents } = toGemini(messages);
   let text = "";
-  let usage: LlmUsage | null = null;
-  let finishReason: string | null = null;
-  const open = () =>
-    llm().chat.completions.create(
-      {
+  let last: GenerateContentResponse | undefined;
+  let usageChunk: GenerateContentResponse | undefined;
+  const stream = await withRetry(
+    () =>
+      ai().models.generateContentStream({
         model: modelName(),
-        messages,
-        stream: true,
-        temperature: opts.temperature ?? 0.1,
-        max_tokens: opts.maxTokens ?? 1800,
-        ...(caps.streamUsage ? { stream_options: { include_usage: true } } : {}),
-      },
-      { signal: opts.signal },
-    );
-  let stream: Awaited<ReturnType<typeof open>>;
-  try {
-    stream = await withRetry(open, opts);
-  } catch (err) {
-    if (caps.streamUsage && isStreamOptionsRejection(err)) {
-      caps.streamUsage = false;
-      stream = await withRetry(open, opts);
-    } else throw err;
-  }
+        contents,
+        config: { ...baseConfig(opts, 1800, 0.1), systemInstruction },
+      }),
+    opts,
+  );
   try {
     for await (const chunk of stream) {
-      const choice = chunk.choices?.[0];
-      const delta = choice?.delta?.content;
+      const delta = visibleText(chunk.candidates?.[0]?.content?.parts);
       if (delta) {
         text += delta;
         onDelta(delta);
       }
-      if (choice?.finish_reason) finishReason = choice.finish_reason;
-      if (chunk.usage) usage = { inputTokens: chunk.usage.prompt_tokens, outputTokens: chunk.usage.completion_tokens, calls: 1 };
+      if (chunk.candidates?.[0]?.finishReason || chunk.promptFeedback?.blockReason) last = chunk;
+      if (chunk.usageMetadata) usageChunk = chunk;
     }
+  } catch (err) {
+    if (err instanceof ApiError) throw new LlmUnavailableError(providerMessage(err), err.status, err.message);
+    throw err;
   } finally {
-    const u = usage ?? { inputTokens: estimateInput(messages), outputTokens: countTokens(text), calls: 1 };
-    usage = u;
+    const u = usageOf(usageChunk, estimateMessagesTokens(messages), countTokens(text));
     logCall(opts.label, u, Date.now() - started, opts.signal?.aborted ? " (stopped)" : "");
   }
-  return { text, usage: usage!, finishReason };
+  return { text, usage: usageOf(usageChunk, estimateMessagesTokens(messages), countTokens(text)), finishReason: finishOf(last) };
 }
 
-/** Non-streaming completion with JSON output, validated by zod; one retry with the error (§3). */
-export async function chatJson<T>(
-  messages: ChatMessage[],
-  schema: z.ZodType<T>,
-  opts: CallOptions,
-): Promise<{ value: T; usage: LlmUsage }> {
+/** Non-streaming JSON output constrained by the zod schema (responseJsonSchema), validated; one retry with the error. */
+export async function chatJson<T>(messages: ChatMessage[], schema: z.ZodType<T>, opts: CallOptions): Promise<{ value: T; usage: LlmUsage }> {
   const total: LlmUsage = { inputTokens: 0, outputTokens: 0, calls: 0 };
+  const jsonSchema = geminiJsonSchema(schema);
   let convo = messages;
   for (let attempt = 0; attempt < 2; attempt++) {
     const started = Date.now();
-    const call = () =>
-      llm().chat.completions.create(
-        {
+    const { systemInstruction, contents } = toGemini(convo);
+    const resp = await withRetry(
+      () =>
+        ai().models.generateContent({
           model: modelName(),
-          messages: convo,
-          temperature: opts.temperature ?? 0,
-          max_tokens: opts.maxTokens ?? 1200,
-          ...(caps.jsonMode ? { response_format: { type: "json_object" as const } } : {}),
-        },
-        { signal: opts.signal },
-      );
-    let resp: Awaited<ReturnType<typeof call>>;
-    try {
-      resp = await withRetry(call, opts);
-    } catch (err) {
-      if (caps.jsonMode && isJsonModeRejection(err)) {
-        caps.jsonMode = false;
-        resp = await withRetry(call, opts);
-      } else throw err;
-    }
-    const content = resp.choices[0]?.message?.content ?? "";
-    const u: LlmUsage = {
-      inputTokens: resp.usage?.prompt_tokens ?? estimateInput(convo),
-      outputTokens: resp.usage?.completion_tokens ?? countTokens(content),
-      calls: 1,
-    };
+          contents,
+          config: { ...baseConfig(opts, 1200, 0), systemInstruction, responseMimeType: "application/json", responseJsonSchema: jsonSchema },
+        }),
+      opts,
+    );
+    const content = visibleText(resp.candidates?.[0]?.content?.parts);
+    const u = usageOf(resp, estimateMessagesTokens(convo), countTokens(content));
     total.inputTokens += u.inputTokens;
     total.outputTokens += u.outputTokens;
     total.calls += 1;
@@ -233,35 +339,40 @@ export async function chatJson<T>(
   throw new Error("unreachable");
 }
 
-/** Non-streaming call with tools (agent research rounds, §14.3). */
-export async function chatWithTools(
-  messages: ChatMessage[],
-  tools: ToolDef[],
-  opts: CallOptions,
-): Promise<ToolCallResult> {
+/** Non-streaming call with function declarations (agent research rounds, §14.3). */
+export async function chatWithTools(messages: ChatMessage[], tools: ToolDef[], opts: CallOptions): Promise<ToolCallResult> {
   const started = Date.now();
+  const { systemInstruction, contents } = toGemini(messages);
   const resp = await withRetry(
     () =>
-      llm().chat.completions.create(
-        {
-          model: modelName(),
-          messages,
-          tools,
-          tool_choice: "auto",
-          temperature: opts.temperature ?? 0.1,
-          max_tokens: opts.maxTokens ?? 1200,
+      ai().models.generateContent({
+        model: modelName(),
+        contents,
+        config: {
+          ...baseConfig(opts, 1200, 0.1),
+          systemInstruction,
+          tools: toolDeclarations(tools),
+          toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
         },
-        { signal: opts.signal },
-      ),
+      }),
     opts,
   );
-  const message = resp.choices[0]?.message;
-  if (!message) throw new LlmUnavailableError("The AI provider returned an empty response.");
-  const usage: LlmUsage = {
-    inputTokens: resp.usage?.prompt_tokens ?? estimateInput(messages),
-    outputTokens: resp.usage?.completion_tokens ?? countTokens(message.content ?? ""),
-    calls: 1,
+  const parts = resp.candidates?.[0]?.content?.parts ?? [];
+  let n = 0;
+  const tool_calls: ToolCall[] = parts
+    .filter((p) => p.functionCall?.name)
+    .map((p) => ({
+      id: p.functionCall!.id ?? `${GENERATED_ID}${Date.now().toString(36)}_${n++}`,
+      type: "function" as const,
+      function: { name: p.functionCall!.name!, arguments: JSON.stringify(p.functionCall!.args ?? {}) },
+    }));
+  const message: AssistantMessage = {
+    role: "assistant",
+    content: visibleText(parts) || null,
+    ...(tool_calls.length ? { tool_calls } : {}),
+    providerParts: parts,
   };
-  logCall(opts.label, usage, Date.now() - started, ` tools=${message.tool_calls?.length ?? 0}`);
-  return { message, usage, finishReason: resp.choices[0]?.finish_reason ?? null };
+  const usage = usageOf(resp, estimateMessagesTokens(messages), countTokens(message.content ?? ""));
+  logCall(opts.label, usage, Date.now() - started, ` tools=${tool_calls.length}`);
+  return { message, usage, finishReason: tool_calls.length ? "tool_calls" : finishOf(resp) };
 }

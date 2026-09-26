@@ -89,7 +89,7 @@ export async function streamAnswer(
     },
   });
 
-  let finishReason: string | null = null;
+  let finishReason: string | null = null; // normalised: stop | length | recitation | blocked
   let stopped = false;
   try {
     const r = await (opts.streamImpl ?? streamChat)(
@@ -127,10 +127,17 @@ export async function streamAnswer(
   } finally {
     ctx.signal.removeEventListener("abort", onParentAbort);
   }
-  if (finishReason === "length") {
-    const n = { code: "ANSWER_TRUNCATED", text: "The answer reached its length limit and may be incomplete." };
-    ctx.state.notices.push(n);
-    ctx.emit("notice", n);
+  const stopNotice =
+    finishReason === "length"
+      ? { code: "ANSWER_TRUNCATED", text: "The answer reached its length limit and may be incomplete." }
+      : finishReason === "recitation"
+        ? { code: "ANSWER_RECITATION", text: "The AI provider stopped this answer early because it was reproducing source text verbatim. Quotes shown were still checked against the document; try asking a narrower question." }
+        : finishReason === "blocked"
+          ? { code: "ANSWER_BLOCKED", text: "The AI provider's safety filter stopped this answer. Try rephrasing the question." }
+          : null;
+  if (stopNotice) {
+    ctx.state.notices.push(stopNotice);
+    ctx.emit("notice", stopNotice);
   }
   return { notFound, stopped, text: raw, finishReason };
 }
