@@ -12,14 +12,19 @@ import { claimJob, completeJob, enqueueJob, heartbeat, retryOrFail } from "@/lib
  * Runs against the real Supabase database when DATABASE_URL is set (skipped otherwise).
  * Uses a job type no worker handles, so a running dev server can't steal these jobs.
  */
-const url = process.env.DATABASE_URL;
+const raw = process.env.DATABASE_URL;
+// Skip unless a real connection string is configured (not the .env.example placeholder).
+const url = raw && !/[<>]/.test(raw) && URL.canParse(raw) ? raw : undefined;
 const TEST_TYPE = "queue-test" as unknown as JobType;
 
 describe.skipIf(!url)("job queue (integration)", () => {
-  const client = postgres(url ?? "", { max: 2, onnotice: () => {} });
-  const db = drizzle(client, { schema });
+  // Created lazily: a skipped suite's body still runs during collection.
+  let client: postgres.Sql;
+  let db: ReturnType<typeof drizzle<typeof schema>>;
 
   beforeAll(async () => {
+    client = postgres(url!, { max: 2, onnotice: () => {} });
+    db = drizzle(client, { schema });
     await db.execute(sql`delete from jobs where type = ${TEST_TYPE}`);
   });
   afterAll(async () => {

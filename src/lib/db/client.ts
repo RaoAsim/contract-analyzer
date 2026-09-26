@@ -16,8 +16,9 @@ const g = globalThis as unknown as DbGlobal;
  */
 function init(): { sql: postgres.Sql; db: Db } {
   if (!g.__caDb) {
-    const client = postgres(getConfig().DATABASE_URL, {
-      max: 8,
+    const cfg = getConfig();
+    const client = postgres(cfg.DATABASE_URL, {
+      max: cfg.DATABASE_POOL_MAX,
       idle_timeout: 20,
       connect_timeout: 15,
       onnotice: () => {},

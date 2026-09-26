@@ -132,6 +132,11 @@ describe("verifyQuote — must reject", () => {
     expect(verifyQuote(idx, "The Supplier shall provide free upgrades to the Customer for the lifetime of the Agreement").status).toBe("unverified");
   });
 
+  it("dot leaders are literal text, not an elision", () => {
+    const toc = new DocMatchIndex(["Table of Contents", "40. Governing Law and Jurisdiction .............................. 140", "41. Notices ...... 142"].join("\n"));
+    expect(verifyQuote(toc, "Governing Law and Jurisdiction .............................. 140").status).toBe("verified");
+  });
+
   it("elided segments in the wrong order", () => {
     expect(verifyQuote(idx, "in any Contract Year ... The total aggregate liability of the Supplier").status).toBe("unverified");
   });

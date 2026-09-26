@@ -19,7 +19,9 @@ export const PROTECTED = new Set([
   "and", "or", "nor", "including", "excluding", "only", "any", "all", "none", "each",
 ]);
 
-const ELISION = /\s*(?:\[\s*(?:\.\s*){3}\]|\[\s*…\s*\]|(?:\.\s*){3,}|…)\s*/;
+// "..." / ". . ." / "…" / "[...]" mark an elision. Longer dot runs are dot leaders (tables of contents,
+// signature lines) and are literal document text, not elisions.
+const ELISION = /\s*(?:\[\s*(?:\.\s*){3}\]|\[\s*…\s*\]|(?<!\.\s?)\.\s?\.\s?\.(?!\s?\.)|…)\s*/;
 
 const words = (s: string): string[] => s.split(/\s+/).filter(Boolean);
 

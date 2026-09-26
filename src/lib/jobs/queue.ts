@@ -47,7 +47,7 @@ export async function claimJob(db: Pick<Db, "execute">, types: JobType[]): Promi
   if (types.length === 0) return null;
   const rows = await db.execute<RawJob>(sql`
     UPDATE jobs SET status = 'running', attempts = attempts + 1,
-           locked_until = now() + make_interval(secs => ${LEASE_SECONDS}), updated_at = now()
+           locked_until = now() + make_interval(secs => ${LEASE_SECONDS}::int), updated_at = now()
     WHERE id = (
       SELECT id FROM jobs
       WHERE type IN (${sql.join(types.map((t) => sql`${t}`), sql`, `)})
@@ -71,7 +71,7 @@ export async function claimJob(db: Pick<Db, "execute">, types: JobType[]): Promi
 /** Extends the lease. Returns false if the job is no longer ours (deleted or re-claimed). */
 export async function heartbeat(db: Pick<Db, "execute">, job: ClaimedJob): Promise<boolean> {
   const rows = await db.execute<{ id: string }>(sql`
-    UPDATE jobs SET locked_until = now() + make_interval(secs => ${LEASE_SECONDS}), updated_at = now()
+    UPDATE jobs SET locked_until = now() + make_interval(secs => ${LEASE_SECONDS}::int), updated_at = now()
     WHERE id = ${job.id} AND status = 'running' AND attempts = ${job.attempts}
     RETURNING id`);
   return rows.length > 0;
@@ -106,7 +106,7 @@ export async function retryOrFail(
   const delay = BACKOFF_BASE_SECONDS * 2 ** job.attempts;
   await db.execute(sql`
     UPDATE jobs SET status = 'queued', locked_until = NULL, last_error = ${error.slice(0, 2000)},
-           run_after = now() + make_interval(secs => ${delay}), updated_at = now()
+           run_after = now() + make_interval(secs => ${delay}::int), updated_at = now()
     WHERE id = ${job.id} AND attempts = ${job.attempts}`);
   return "retrying";
 }

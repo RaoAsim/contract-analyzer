@@ -10,6 +10,7 @@ const intWithDefault = (def: number, min = 1) => z.coerce.number().int().min(min
 
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required (Supabase Session pooler string)"),
+  DATABASE_POOL_MAX: intWithDefault(8),
   SUPABASE_URL: z.string().url("SUPABASE_URL must be a URL like https://<ref>.supabase.co"),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, "SUPABASE_SERVICE_ROLE_KEY is required"),
   SUPABASE_STORAGE_BUCKET: z.string().min(1).default("documents"),

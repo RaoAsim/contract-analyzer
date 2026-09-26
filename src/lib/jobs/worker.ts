@@ -29,7 +29,11 @@ export function workerStatus(): "running" | "stopped" {
 }
 
 function errorText(err: unknown): string {
-  return err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  if (!(err instanceof Error)) return String(err);
+  // Drizzle wraps driver errors ("Failed query: …"); the cause holds the real reason.
+  const cause = err.cause instanceof Error ? ` — cause: ${err.cause.message}` : "";
+  const msg = err.message.startsWith("Failed query") ? err.message.split("\n")[0]!.slice(0, 160) : err.message;
+  return `${err.name}: ${msg}${cause}`;
 }
 
 async function runJob(job: ClaimedJob, registry: HandlerRegistry): Promise<void> {
@@ -61,15 +65,20 @@ async function runJob(job: ClaimedJob, registry: HandlerRegistry): Promise<void>
     }
     const permanent = err instanceof PermanentJobError;
     const message = errorText(err);
-    const outcome = permanent ? "failed" : await retryOrFail(db, job, message);
-    if (permanent) await failJob(db, job, message);
-    console.warn(
-      `[worker] ${job.type} ${job.targetId} ${permanent ? "failed permanently" : outcome} ` +
-        `(attempt ${job.attempts}/${job.maxAttempts}): ${message}`,
-    );
-    await handler
-      .onFailure(ctx, { permanent, outcome, error: err })
-      .catch((e: unknown) => console.error(`[worker] onFailure for job ${job.id} threw:`, errorText(e)));
+    try {
+      const outcome = permanent ? "failed" : await retryOrFail(db, job, message);
+      if (permanent) await failJob(db, job, message);
+      console.warn(
+        `[worker] ${job.type} ${job.targetId} ${permanent ? "failed permanently" : outcome} ` +
+          `(attempt ${job.attempts}/${job.maxAttempts}): ${message}`,
+      );
+      await handler
+        .onFailure(ctx, { permanent, outcome, error: err })
+        .catch((e: unknown) => console.error(`[worker] onFailure for job ${job.id} threw:`, errorText(e)));
+    } catch (e) {
+      // Couldn't record the failure (e.g. DB unreachable): the lease expires and the job is retried.
+      console.error(`[worker] could not record failure of job ${job.id}:`, errorText(e));
+    }
   } finally {
     clearInterval(beat);
   }
@@ -80,7 +89,7 @@ async function recoverInterruptedMessages(): Promise<void> {
   const rows = await getDb().execute<{ id: string }>(sql`
     UPDATE messages SET status = 'interrupted', completed_at = now(), updated_at = now()
     WHERE status = 'streaming'
-      AND updated_at < now() - make_interval(mins => ${STALE_STREAMING_MINUTES})
+      AND updated_at < now() - make_interval(mins => ${STALE_STREAMING_MINUTES}::int)
     RETURNING id`);
   if (rows.length > 0) console.log(`[worker] marked ${rows.length} stale streaming message(s) interrupted`);
 }
