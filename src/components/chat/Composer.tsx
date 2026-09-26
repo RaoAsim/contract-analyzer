@@ -21,10 +21,10 @@ type Props = {
   placeholder?: string;
 };
 
-const MODES: { value: ComposerMode; label: string; icon: typeof Zap; hint: string }[] = [
-  { value: "standard", label: "Standard", icon: Zap, hint: "Fast. Reads the whole contract if it's short, otherwise the most relevant sections — and reads everything automatically if the answer isn't there." },
-  { value: "thorough", label: "Whole document", icon: BookOpen, hint: "Reads every part of the contract for this question. Slower (about 10–30 s on a long contract), but nothing is skipped." },
-  { value: "agent", label: "Research agent", icon: Bot, hint: "The AI plans its own research — outline, search, sections, cross-references — then answers. You'll see each step." },
+const MODES: { value: ComposerMode; label: string; short: string; icon: typeof Zap; hint: string }[] = [
+  { value: "standard", label: "Standard", short: "Standard", icon: Zap, hint: "Fast. Reads the whole contract if it's short, otherwise the most relevant sections — and reads everything automatically if the answer isn't there." },
+  { value: "thorough", label: "Whole document", short: "Whole doc", icon: BookOpen, hint: "Reads every part of the contract for this question. Slower (about 10–30 s on a long contract), but nothing is skipped." },
+  { value: "agent", label: "Research agent", short: "Agent", icon: Bot, hint: "The AI plans its own research — outline, search, sections, cross-references — then answers. You'll see each step." },
 ];
 
 /** Composer (§15.2): autosize textarea, a segmented mode control, Send ↔ Stop. Enter sends, Shift+Enter newline, Esc stops. */
@@ -43,7 +43,7 @@ export function Composer({ value, onChange, mode, onModeChange, onSend, onStop, 
 
   return (
     <div className="border-t bg-white px-3 pt-2 pb-3">
-      <div role="radiogroup" aria-label="Answer mode" className="mb-2 inline-flex rounded-lg bg-stone-100 p-0.5">
+      <div role="radiogroup" aria-label="Answer mode" className="mb-2 flex w-full rounded-lg bg-stone-100 p-0.5 sm:inline-flex sm:w-auto">
         {MODES.map((m) => {
           const on = m.value === mode;
           return (
@@ -55,12 +55,13 @@ export function Composer({ value, onChange, mode, onModeChange, onSend, onStop, 
               disabled={busy}
               onClick={() => onModeChange(m.value)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-60",
+                "inline-flex flex-1 items-center justify-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-60 sm:flex-none sm:py-1",
                 on ? "bg-white text-stone-900 shadow-xs ring-1 ring-stone-200" : "text-stone-500 hover:text-stone-800",
               )}
             >
               <m.icon className={cn("size-3.5", on && "text-primary")} aria-hidden="true" />
-              {m.label}
+              <span className="sm:hidden">{m.short}</span>
+              <span className="hidden sm:inline">{m.label}</span>
             </button>
           );
         })}

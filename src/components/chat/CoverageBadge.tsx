@@ -1,7 +1,7 @@
 "use client";
 
 import { BookOpenCheck, FileSearch, ScanSearch } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import type { Coverage, CoverageDoc } from "@/types/chat";
 
@@ -34,12 +34,14 @@ export function CoverageBadge({ coverage }: { coverage: Coverage }): React.React
       ? docLine(coverage.perDoc[0], coverage.mode).split(" · ")[0]!
       : "No document read";
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          tabIndex={0}
+    // A popover (not a tooltip) so the details open on tap on phones too.
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Coverage: ${label}. Show details`}
           className={cn(
-            "inline-flex max-w-full cursor-help items-center gap-1.5 truncate rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
+            "inline-flex max-w-full items-center gap-1.5 truncate rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
             tone === "green" && "bg-emerald-50 text-emerald-800 ring-emerald-200",
             tone === "blue" && "bg-sky-50 text-sky-800 ring-sky-200",
             tone === "amber" && "bg-amber-50 text-amber-900 ring-amber-200",
@@ -47,9 +49,10 @@ export function CoverageBadge({ coverage }: { coverage: Coverage }): React.React
         >
           <Icon className="size-3.5 shrink-0" aria-hidden="true" />
           <span className="truncate">{label}</span>
-        </span>
-      </TooltipTrigger>
-      <TooltipContent className="max-w-sm">
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-80 text-xs">
+        <p className="mb-2 font-semibold text-stone-800">What this answer is based on</p>
         <ul className="space-y-1.5">
           {coverage.perDoc.map((d) => (
             <li key={d.docId}>
@@ -65,7 +68,7 @@ export function CoverageBadge({ coverage }: { coverage: Coverage }): React.React
             </li>
           ))}
         </ul>
-      </TooltipContent>
-    </Tooltip>
+      </PopoverContent>
+    </Popover>
   );
 }

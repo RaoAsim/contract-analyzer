@@ -11,6 +11,8 @@ Ask questions about contracts and get answers backed by quotes that the app itse
 
 Live app: _not deployed yet, see [Not finished](#whats-finished-whats-not)_ · Demo video: _not recorded yet_
 
+**More detail:** [Technical overview and assignment coverage](docs/TECHNICAL.md) · [Manual test plan with expected answers](docs/TEST_PLAN.md)
+
 ## Screenshots
 
 > These were captured with the local end-to-end harness ([Testing](#testing)). It uses real Postgres, the real UI and real pdf.js, but a **scripted stand-in for Gemini**, so the answer wording and the comparison summaries are placeholder text. Replace these with screenshots from the live app.
@@ -151,7 +153,7 @@ Fixtures (regenerate with `npm run fixtures`) are committed in `tests/fixtures/`
 **Not finished yet:**
 - Not yet run against a real Supabase project and the real Gemini API from this environment, because no credentials were available. Every Gemini request shape and every Supabase call is exercised against local stand-ins that follow the documented REST protocols, but run the manual test pass after configuring `.env`.
 - Not deployed; no live URL, final screenshots or demo video yet.
-- Optional extras not built: LLM clause extraction and a Clauses tab, export, semantic (embedding) search, voice input, anonymisation, Arabic/RTL. Clause *indexing* is keyword-based and feeds the agent's `list_clauses` tool.
+- Optional extras not built: a clause-list screen (a keyword clause index exists and powers the agent's `list_clauses` tool, but it isn't claimed as the extra), export, semantic (embedding) search, voice input, anonymisation, Arabic/RTL.
 
 **Known limitations:**
 - Multi-column PDFs can interleave columns: pdf.js content-stream order is kept, not re-sorted.

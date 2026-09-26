@@ -316,5 +316,8 @@ export function existsExactly(idx: DocMatchIndex, rawQuote: string): boolean {
 
 /** The document's own words for a span: furniture removed, whitespace collapsed (§9.3 display text). */
 export function displayText(idx: DocMatchIndex, span: Span): string {
-  return blankRanges(idx.canon.slice(span.start, span.end), span.start, idx.skip).replace(/\s+/g, " ").trim();
+  return blankRanges(idx.canon.slice(span.start, span.end), span.start, idx.skip)
+    .replace(/(\p{L})-[ \t]*\n\s*(?=\p{Ll})/gu, "$1") // "termi-\nnation" → "termination" (line or page break)
+    .replace(/\s+/g, " ")
+    .trim();
 }

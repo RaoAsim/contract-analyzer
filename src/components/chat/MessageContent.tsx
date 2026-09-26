@@ -15,10 +15,33 @@ type Props = {
   onOpen: (c: Citation) => void;
 };
 
+/**
+ * A sentence the model wrote *around* its quote ("The agreement is made ⟦c1⟧.", "…as stated in ⟦c2⟧")
+ * would read as broken if the quote became a bare number. Detect a dangling lead-in word.
+ */
+const DANGLING = /(?:\b(?:is|are|was|were|be|made|that|where|which|as|since|because|states?|stating|provides?|providing|says?|saying|reads?|noting|meaning|namely|including|of|by|under|in|to|with|from|between|and|or|than|per)|[:—–])\s*$/i;
+
+function escapeMd(s: string): string {
+  return s.replace(/([\\`*_[\]<>#|~])/g, "\\$1");
+}
+
+/** ⟦cN⟧ → a chip link; when the sentence depends on the quote, show the verified words inline too. */
+export function toMarkdown(content: string, byId: Map<string, Citation>): string {
+  return content.replace(/⟦(c\d+)⟧/g, (_, id: string, offset: number) => {
+    const c = byId.get(id);
+    const verified = c && (c.status === "verified" || c.status === "verified_close") && c.displayText;
+    if (verified && DANGLING.test(content.slice(Math.max(0, offset - 40), offset))) {
+      const q = c.displayText!.length > 240 ? `${c.displayText!.slice(0, 237)}…` : c.displayText!;
+      return ` *“${escapeMd(q)}”* [${id}](#cite-${id})`;
+    }
+    return ` [${id}](#cite-${id})`;
+  });
+}
+
 /** Markdown with ⟦cN⟧ tokens rendered as citation chips (§11.7). Raw HTML is never rendered. */
 function MessageContentInner({ content, citations, numbers, docName, multi, onOpen }: Props): React.ReactElement {
   const byId = new Map(citations.map((c) => [c.id, c]));
-  const md = content.replace(/⟦(c\d+)⟧/g, " [$1](#cite-$1)");
+  const md = toMarkdown(content, byId);
   return (
     <div className="prose-answer text-[15px] leading-relaxed text-stone-800">
       <ReactMarkdown

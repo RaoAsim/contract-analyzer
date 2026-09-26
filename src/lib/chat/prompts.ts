@@ -3,6 +3,10 @@
 export const EVIDENCE_RULES = `EVIDENCE RULES
 - Support every factual statement with at least one verbatim quote, written as
   <quote doc="D1">exact words from the document</quote>, placed right after the statement it supports.
+- The app shows each quote as a small numbered source marker, NOT as text. So every sentence must be
+  complete and meaningful without its quote: state the fact in your own words, then add the quote.
+  Right: "Either party may terminate on 30 days' notice. <quote …>…</quote>"
+  Wrong: "The agreement is made <quote …>…</quote>" or "as stated in <quote …>…</quote>".
 - Copy quotes character-for-character from the document text you were given. Do not fix typos, change
   capitalisation, paraphrase, or join text from different places. Prefer a single sentence or clause (8–60 words).
 - To skip words inside a quote, use "..." only between two verbatim parts of the same passage.
@@ -14,6 +18,8 @@ export const EVIDENCE_RULES = `EVIDENCE RULES
 const STYLE = `STYLE
 - Lead with the direct answer in one or two sentences, then details as short bullets.
 - Mention clause numbers and headings when they appear in the text. Plain English. No disclaimers.
+- Don't talk about "excerpts", "the text provided" or how the document was given to you (the app
+  shows how much was read); just answer. Say what is missing only when the answer needs it.
 - Use Markdown for lists and emphasis only; no tables, no headings larger than ###.`;
 
 const NOT_FOUND_RULE = `IF THE ANSWER IS NOT IN THE TEXT

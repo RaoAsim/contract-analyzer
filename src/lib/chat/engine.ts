@@ -12,7 +12,7 @@ import type { DocContext, RunContext, StreamOutcome } from "./chat.types";
 import type { CitationDoc } from "./citations";
 import { docCoverage, isDocComplete } from "./coverage";
 import { finish, notice } from "./finish";
-import { isOverviewQuestion } from "./intent";
+import { isOverviewQuestion, specificityCheck } from "./intent";
 import { answerSystemPrompt, COVERAGE_FULL, COVERAGE_SCAN, coverageRetrieval, documentsBlock, TOPIC_PROMPT } from "./prompts";
 import { failedPagesLabel, findingsContext, scanDocuments } from "./scan";
 import { streamAnswer } from "./stream";
@@ -138,8 +138,7 @@ export async function runStandard(ctx: RunContext): Promise<void> {
   const fitting = fits.map((d) => fullContext(d.tag, d.data));
 
   // General / vague questions: overview from the outline + section openings. No planner, no scan.
-  const inDocument = (w: string): boolean => ctx.docs.some((d) => new RegExp(`\\b${w.replace(/[^a-z0-9]/g, "")}`, "i").test(d.data.text));
-  if (!ctx.options.thorough && isOverviewQuestion(ctx.question, inDocument)) {
+  if (!ctx.options.thorough && isOverviewQuestion(ctx.question, specificityCheck(ctx.docs.map((d) => d.data.text)))) {
     const contexts: DocContext[] = [...fitting, ...large.map((d) => overviewContext(d.tag, d.data, perDocBudget))].sort((a, b) => a.tag.localeCompare(b.tag));
     ctx.state.mode = large.length === 0 ? "full" : "retrieval";
     const coverageText =

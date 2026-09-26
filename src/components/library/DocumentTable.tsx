@@ -1,13 +1,11 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { FileText, FileType2, Loader2, MoreHorizontal, RotateCw, Trash2, Upload, X } from "lucide-react";
+import { FileText, FileType2, Loader2, MessageSquare, RotateCw, Trash2, Upload, X } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Progress } from "@/components/ui/progress";
 import { apiFetch } from "@/lib/client/api";
 import { formatBytes, formatRelative } from "@/lib/client/format";
@@ -51,13 +49,12 @@ function RetryButton({ doc }: { doc: DocumentSummary }): React.ReactElement {
 }
 
 export function DocumentTable({ docs, uploads, selected, onToggle, onToggleAll, onDelete, onDismissUpload, now }: Props): React.ReactElement {
-  const router = useRouter();
   const allSelected = docs.length > 0 && docs.every((d) => selected.has(d.id));
   const someSelected = docs.some((d) => selected.has(d.id));
 
   return (
     <div className="overflow-hidden rounded-lg border bg-white shadow-xs">
-      <div className="hidden grid-cols-[2rem_minmax(0,1fr)_4rem_5rem_7rem_minmax(12rem,18rem)_2.5rem] items-center gap-3 border-b bg-stone-50 px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground md:grid">
+      <div className="hidden grid-cols-[2rem_minmax(0,1fr)_4rem_5rem_7rem_minmax(12rem,18rem)_7.5rem] items-center gap-3 border-b bg-stone-50 px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground md:grid">
         <Checkbox
           checked={allSelected ? true : someSelected ? "indeterminate" : false}
           onCheckedChange={onToggleAll}
@@ -72,7 +69,7 @@ export function DocumentTable({ docs, uploads, selected, onToggle, onToggleAll, 
       </div>
       <ul className="divide-y">
         {uploads.map((u) => (
-          <li key={u.localId} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 md:grid-cols-[2rem_minmax(0,1fr)_4rem_5rem_7rem_minmax(12rem,18rem)_2.5rem]">
+          <li key={u.localId} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 md:grid-cols-[2rem_minmax(0,1fr)_4rem_5rem_7rem_minmax(12rem,18rem)_7.5rem]">
             <span className="hidden md:block" />
             <div className="flex min-w-0 items-center gap-2">
               <Upload className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -111,7 +108,7 @@ export function DocumentTable({ docs, uploads, selected, onToggle, onToggleAll, 
             <li
               key={d.id}
               className={cn(
-                "grid grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 transition-colors hover:bg-stone-50 md:grid-cols-[2rem_minmax(0,1fr)_4rem_5rem_7rem_minmax(12rem,18rem)_2.5rem]",
+                "grid grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 transition-colors hover:bg-stone-50 md:grid-cols-[2rem_minmax(0,1fr)_4rem_5rem_7rem_minmax(12rem,18rem)_7.5rem]",
                 selected.has(d.id) && "bg-accent/60 hover:bg-accent",
               )}
             >
@@ -144,23 +141,20 @@ export function DocumentTable({ docs, uploads, selected, onToggle, onToggleAll, 
                   </div>
                 )}
               </div>
-              <div className="col-start-3 row-start-1 flex justify-end md:col-start-auto md:row-auto">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="size-8" aria-label={`Actions for ${d.name}`}>
-                      <MoreHorizontal aria-hidden="true" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem disabled={d.status === "failed"} onSelect={() => router.push(`/documents/${d.id}`)}>
-                      Open
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem className="text-red-700 focus:text-red-700" onSelect={() => onDelete(d)}>
-                      Delete…
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+              <div className="col-start-3 row-start-1 flex items-center justify-end gap-1 md:col-start-auto md:row-auto">
+                {d.status !== "failed" && (
+                  <Button size="sm" variant="outline" asChild className="h-8">
+                    <Link href={`/documents/${d.id}`} aria-label={`Chat about ${d.name}`}>
+                      <MessageSquare aria-hidden="true" />
+                      <span className="hidden sm:inline">Chat</span>
+                    </Link>
+                  </Button>
+                )}
+                {d.status !== "failed" && (
+                  <Button size="icon" variant="ghost" className="size-8 text-stone-500 hover:bg-red-50 hover:text-red-700" onClick={() => onDelete(d)} aria-label={`Delete ${d.name}`} title="Delete">
+                    <Trash2 aria-hidden="true" />
+                  </Button>
+                )}
               </div>
             </li>
           );
