@@ -113,7 +113,9 @@ export async function withRetry<T>(fn: () => Promise<T>, opts: Pick<CallOptions,
         throw err;
       }
       const delay = retryAfterMs(err) ?? 1000 * 2 ** attempt + Math.floor(Math.random() * 400);
-      opts.onRetry?.({ attempt: attempt + 1, delayMs: delay, status: err instanceof ApiError ? err.status : undefined });
+      const status = err instanceof ApiError ? err.status : undefined;
+      console.warn(`[llm] retry ${attempt + 1}/${attempts} in ${delay} ms (${status ?? (err instanceof Error ? err.message.slice(0, 80) : "error")})`);
+      opts.onRetry?.({ attempt: attempt + 1, delayMs: delay, status });
       await sleep(delay, opts.signal);
     }
   }

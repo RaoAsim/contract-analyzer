@@ -13,6 +13,8 @@ import type { ChunkHit, QueryPlan } from "./search.types";
 const STOPWORDS = new Set(
   "the a an and or of to in for on by with is are was were be been being this that these those what which who whom whose when where why how does do did can could should would may might must shall will there their them they it its as at from into about any all each every under over than then also not no nor if but so such".split(" "),
 );
+/** Words present in almost every chunk of a contract: they swamp ts_rank in an OR query. */
+const CONTRACT_STOPWORDS = new Set("agreement agreements contract contracts party parties clause clauses section sections document terms term hereof herein thereof".split(" "));
 
 const hitColumns = {
   id: chunks.id,
@@ -33,7 +35,8 @@ const planSchema = z.object({
 /** One quick JSON call for keyword variants (skipped if it takes over 2.5 s). */
 export async function planQueries(question: string, outlineTop: string, signal: AbortSignal): Promise<{ plan: QueryPlan; usage: LlmUsage | null }> {
   const fallback: QueryPlan = { queries: [], sections: [], topic: null };
-  const timeout = AbortSignal.timeout(2500);
+  // Gemini with thinking typically answers in 1–3 s; give it room, but don't hold the answer up for long.
+  const timeout = AbortSignal.timeout(6000);
   try {
     const { value, usage } = await chatJson(
       [{ role: "user", content: QUERY_VARIANTS(question, outlineTop) }],
@@ -41,14 +44,18 @@ export async function planQueries(question: string, outlineTop: string, signal: 
       { signal: AbortSignal.any([signal, timeout]), label: "query-variants", maxTokens: 200 },
     );
     return { plan: { queries: value.queries.filter((q) => q.trim()).slice(0, 4), sections: value.sections, topic: value.topic ?? null }, usage };
-  } catch {
+  } catch (err) {
+    if (!signal.aborted) console.warn(`[search] query planning skipped: ${err instanceof Error ? err.message : err}`);
     return { plan: fallback, usage: null };
   }
 }
 
 /** OR-query of the question's content words, safe for to_tsquery (letters/digits only). */
 export function orQuery(text: string): string | null {
-  const terms = [...new Set((text.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []).filter((w) => !STOPWORDS.has(w)))].slice(0, 12);
+  const all = [...new Set((text.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []).filter((w) => !STOPWORDS.has(w)))];
+  const specific = all.filter((w) => !CONTRACT_STOPWORDS.has(w));
+  // Keep a generic word only if it is all the question has ("what is this agreement?").
+  const terms = (specific.length ? specific : all).slice(0, 12);
   return terms.length ? terms.join(" | ") : null;
 }
 
