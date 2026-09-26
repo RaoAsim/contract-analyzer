@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { LibraryView } from "@/components/library/LibraryView";
+import { publicLimits } from "@/lib/config";
 
 export const metadata: Metadata = { title: "Library" };
+export const dynamic = "force-dynamic";
 
 export default function LibraryPage(): React.ReactElement {
   return (
@@ -9,10 +11,10 @@ export default function LibraryPage(): React.ReactElement {
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight text-stone-900">Library</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Your contracts. Open one to ask questions, or select several to compare them.
+          Upload contracts, open one to ask questions, or select several to ask across them or compare two versions.
         </p>
       </div>
-      <LibraryView />
+      <LibraryView limits={publicLimits()} />
     </main>
   );
 }

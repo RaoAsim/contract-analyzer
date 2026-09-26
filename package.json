@@ -14,7 +14,8 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "storage:setup": "tsx --conditions=react-server scripts/setup-storage.ts",
     "storage:smoke": "tsx --conditions=react-server scripts/storage-smoke.ts",
-    "fixtures": "tsx scripts/generate-fixtures.ts"
+    "fixtures": "tsx scripts/generate-fixtures.ts",
+    "postinstall": "node scripts/copy-pdfjs-assets.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",
@@ -61,7 +62,6 @@
     "drizzle-kit": "^0.31.11",
     "eslint": "^9",
     "eslint-config-next": "16.3.6",
-    "pdf-lib": "^1.17.1",
     "pdfkit": "^0.20.2",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
@@ -69,6 +69,6 @@
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=22.12"
+    "node": ">=22.13"
   }
 }

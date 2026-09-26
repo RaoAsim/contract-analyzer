@@ -58,3 +58,12 @@ export function getConfig(): AppConfig {
   cached = parsed.data;
   return cached;
 }
+
+/** Non-secret limits for the UI. Never throws, so pages render even if the env is incomplete. */
+export function publicLimits(): { maxUploadMb: number; maxPages: number } {
+  const num = (v: string | undefined, d: number): number => {
+    const n = Number.parseInt(v ?? "", 10);
+    return Number.isFinite(n) && n > 0 ? n : d;
+  };
+  return { maxUploadMb: num(process.env.MAX_UPLOAD_MB, 50), maxPages: num(process.env.MAX_PAGES, 500) };
+}

@@ -21,6 +21,19 @@ export type DocumentWarning = { code: DocumentWarningCode; message: string };
  */
 export type PageItem = [canonStart: number, length: number, x: number, y: number, w: number, h: number];
 
+export type OutlineSection = {
+  id: string;
+  number: string | null;
+  title: string;
+  level: number;
+  charStart: number;
+  charEnd: number;
+  pageStart: number | null;
+  pageEnd: number | null;
+};
+
+export type PageSize = { pageNo: number; width: number; height: number };
+
 /** Library row shape returned by `GET /api/documents` (no text or bytes). */
 export type DocumentSummary = {
   id: string;
@@ -42,3 +55,11 @@ export type DocumentSummary = {
   updatedAt: string;
   processedAt: string | null;
 };
+
+export type DocumentDetail = DocumentSummary & {
+  pages: PageSize[];
+  outline: OutlineSection[];
+  clauseCounts: Record<string, number>;
+};
+
+export type DeletionImpact = { singleChats: number; multiChats: number; comparisons: number };

@@ -50,3 +50,15 @@ export type Usage = { inputTokens: number; outputTokens: number; calls: number }
 export type MessageError = { code: string; message: string; retryable: boolean };
 
 export type Notice = { code: string; text: string; action?: { kind: "thorough"; label: string } };
+
+export type ConversationDoc = { tag: string; documentId: string | null; name: string; kind?: "pdf" | "docx" };
+
+export type ConversationSummary = {
+  id: string;
+  title: string;
+  kind: "single" | "multi";
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  documents: ConversationDoc[];
+};

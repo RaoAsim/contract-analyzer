@@ -99,3 +99,24 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* DOCX viewer typography (our own HTML, §10.2) */
+.docx-body h1,
+.docx-body h2,
+.docx-body h3,
+.docx-body h4 {
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 1.4em 0 0.5em;
+}
+.docx-body h1 { font-size: 1.15em; }
+.docx-body h2 { font-size: 1.07em; }
+.docx-body h3,
+.docx-body h4 { font-size: 1em; }
+.docx-body p { margin: 0 0 0.65em; white-space: pre-wrap; }
+.docx-body .docx-empty { height: 0.5em; margin: 0; }
+.docx-body .num { font-variant-numeric: tabular-nums; }
+.docx-body .bullet { display: inline-block; width: 1.25em; }
+.docx-body .docx-table { width: 100%; border-collapse: collapse; margin: 0.75em 0 1em; font-size: 0.95em; }
+.docx-body .docx-table td { border: 1px solid #d6d3d1; padding: 0.35em 0.6em; vertical-align: top; }
+.docx-body .docx-table td p { margin: 0; }
