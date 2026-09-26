@@ -4,6 +4,7 @@ import { withApiHandler } from "@/lib/api/handler";
 import { idParam } from "@/lib/api/params";
 import { deleteDocumentRows, deletionImpact, getDocumentDetail } from "@/lib/db/queries/documents";
 import { removeObjects } from "@/lib/storage/supabase";
+import { evictDocData } from "@/lib/text/cache";
 import type { DeletionImpact, DocumentDetail } from "@/types/document";
 
 export const runtime = "nodejs";
@@ -23,6 +24,7 @@ export const DELETE = withApiHandler(async (_req: Request, ctx: Ctx): Promise<Ne
   const id = await idParam(ctx, "The document");
   const deleted = await deleteDocumentRows(id);
   if (!deleted) throw notFound("The document");
+  evictDocData(id);
   // The DB delete is what matters; a Storage failure is logged, not surfaced (§7).
   await removeObjects([deleted.storagePath]).catch((err: unknown) =>
     console.error(`[documents] could not remove ${deleted.storagePath} from storage:`, err instanceof Error ? err.message : err),

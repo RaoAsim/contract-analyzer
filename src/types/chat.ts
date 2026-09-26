@@ -21,7 +21,7 @@ export type CoverageDoc = {
   /** "§3, §12–14" (DOCX / agent) */
   sectionsRead?: string;
   unreadablePages?: number[];
-  failedRanges?: { pageStart: number; pageEnd: number; reason: string }[];
+  failedRanges?: { pageStart: number; pageEnd: number; reason: string; label?: string }[];
   /** Agent mode: check_entire_document ran with complete coverage. */
   checkedEntireDocument?: boolean;
 };
@@ -61,4 +61,24 @@ export type ConversationSummary = {
   updatedAt: string;
   messageCount: number;
   documents: ConversationDoc[];
+};
+
+export type MessageView = {
+  id: string;
+  role: MessageRole;
+  content: string;
+  citations: import("./citation").Citation[];
+  coverage: Coverage | null;
+  trace: TraceStep[];
+  notices: Notice[];
+  mode: AnswerMode | null;
+  status: MessageStatus;
+  error: MessageError | null;
+  usage: Usage | null;
+  createdAt: string;
+};
+
+export type ConversationDetail = {
+  conversation: ConversationSummary;
+  messages: MessageView[];
 };

@@ -4,7 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
-const LINKS = [{ href: "/", label: "Library" }] as const;
+const LINKS = [
+  { href: "/", label: "Library" },
+  { href: "/compare", label: "Compare" },
+] as const;
 
 export function NavLinks(): React.ReactElement {
   const pathname = usePathname();
