@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ViewerHighlight } from "@/components/viewer/viewer.types";
 import type { Citation } from "@/types/citation";
 
@@ -49,5 +49,7 @@ export function useCitationHighlight(): {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  return { highlight: state ? toHighlight(state.c, state.index, state.nonce) : null, show, cycle, clear };
+  // Stable identity: viewers re-scroll only when the highlight really changes (not on every render).
+  const highlight = useMemo(() => (state ? toHighlight(state.c, state.index, state.nonce) : null), [state]);
+  return { highlight, show, cycle, clear };
 }

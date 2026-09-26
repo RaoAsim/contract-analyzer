@@ -22,6 +22,7 @@ export function DocxViewer({ doc, highlight, zoom }: DocxViewerProps): React.Rea
   const body = useRef<HTMLDivElement>(null);
   const flashEl = useRef<HTMLDivElement>(null);
   const index = useRef<OffsetIndex | null>(null);
+  const scrolledNonce = useRef<number | null>(null);
   const q = useQuery({
     queryKey: ["document-html", doc.id],
     queryFn: () => apiFetch<{ html: string }>(`/api/documents/${doc.id}/html`),
@@ -39,12 +40,15 @@ export function DocxViewer({ doc, highlight, zoom }: DocxViewerProps): React.Rea
     const active = highlight.active.map((s) => rangeFor(idx, s)).filter((r): r is Range => r !== null);
     const faint = highlight.faint.map((s) => rangeFor(idx, s)).filter((r): r is Range => r !== null);
     const first = active[0];
-    if (first) {
+    // Highlights are (re)applied on every run; scrolling and the flash only for a new highlight.
+    if (first && scrolledNonce.current !== highlight.nonce) {
+      scrolledNonce.current = highlight.nonce;
       const rect = first.getBoundingClientRect();
       const rootRect = sc.getBoundingClientRect();
       const contentTop = sc.scrollTop + rect.top - rootRect.top;
       const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      sc.scrollTo({ top: Math.max(0, contentTop - 120), behavior: reduce ? "auto" : "smooth" });
+      const far = Math.abs(contentTop - 120 - sc.scrollTop) > sc.clientHeight * 3;
+      sc.scrollTo({ top: Math.max(0, contentTop - 120), behavior: reduce || far ? "auto" : "smooth" });
       const f = flashEl.current;
       if (f) {
         Object.assign(f.style, {

@@ -28,6 +28,7 @@ export function PdfViewer({ doc, highlight, zoom, onPageChange, registerHandle }
   const [visible, setVisible] = useState<Set<number>>(new Set([1]));
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const scrolledNonce = useRef<number | null>(null);
 
   // Fit-to-width base scale, times the user's zoom.
   useEffect(() => {
@@ -88,7 +89,9 @@ export function PdfViewer({ doc, highlight, zoom, onPageChange, registerHandle }
     if (!root || !el) return;
     const top = el.offsetTop + yFraction * el.clientHeight - SCROLL_OFFSET;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    root.scrollTo({ top: Math.max(0, top), behavior: reduce ? "auto" : "smooth" });
+    // Smooth only for short hops; long jumps are instant so they can't be interrupted.
+    const far = Math.abs(top - root.scrollTop) > root.clientHeight * 3;
+    root.scrollTo({ top: Math.max(0, top), behavior: reduce || far ? "auto" : "smooth" });
   }, []);
 
   useEffect(() => {
@@ -99,6 +102,8 @@ export function PdfViewer({ doc, highlight, zoom, onPageChange, registerHandle }
   // Scroll to the first rectangle of the active highlight and replay the flash.
   useEffect(() => {
     if (!loaded || !highlight || highlight.docId !== doc.id) return;
+    if (scrolledNonce.current === highlight.nonce) return;
+    scrolledNonce.current = highlight.nonce;
     const first = highlight.active.flatMap((s) => s.boxes ?? []).find((b) => b.rects.length > 0);
     if (!first) return;
     scrollToPage(first.page, first.rects[0]![1]);
@@ -130,6 +135,9 @@ export function PdfViewer({ doc, highlight, zoom, onPageChange, registerHandle }
       <Document
         file={`/api/documents/${doc.id}/file`}
         options={OPTIONS}
+        // react-pdf 11 suspends by default; that would hide the whole viewer (and reset the scroll)
+        // whenever a newly visible page loads. Use our own per-page placeholders instead.
+        suspense={false}
         loading={<ViewerLoading />}
         onLoadSuccess={() => requestAnimationFrame(() => setLoaded(true))}
         onLoadError={() => setLoadError("The PDF couldn't be displayed. Try reloading the page.")}

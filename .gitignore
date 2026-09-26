@@ -43,3 +43,6 @@ next-env.d.ts
 
 # pdf.js assets copied at install time
 /public/pdfjs/
+
+# end-to-end harness logs
+/.e2e/
