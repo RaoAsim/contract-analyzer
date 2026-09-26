@@ -39,7 +39,24 @@ async function main(): Promise<void> {
   }
 }
 
+/** Plain-English hints for the connection errors people actually hit with Supabase. */
+function hint(code: string | undefined, message: string): string {
+  if (code === "28P01" || /password authentication failed/i.test(message)) return "Wrong database password. Reset it in Supabase → Settings → Database, update DATABASE_URL, and URL-encode special characters.";
+  if (code === "XX000" && /tenant or user not found/i.test(message)) return "The pooler didn't recognise the user. The Session pooler user must be postgres.<project-ref> (copy the string from Connect → Session pooler).";
+  if (/ENOTFOUND|getaddrinfo/i.test(message)) return "The host name can't be resolved. Copy the Session pooler string again (the direct db.<ref>.supabase.co host is IPv6-only on many networks).";
+  if (/ETIMEDOUT|ECONNREFUSED|timeout/i.test(message)) return "Couldn't reach the database. Check the host/port (Session pooler, port 5432) and that the project isn't paused.";
+  if (/ssl|SSL/.test(message)) return "The server requires SSL. Add ?sslmode=require to DATABASE_URL.";
+  if (code === "42501") return "Permission denied. Use the postgres user from the Session pooler string.";
+  return "";
+}
+
 main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : err);
+  // Drizzle wraps driver errors as "Failed query: …"; the cause carries the real reason.
+  const cause = err instanceof Error && err.cause instanceof Error ? err.cause : err;
+  const code = (cause as { code?: string }).code;
+  const message = cause instanceof Error ? cause.message : String(cause);
+  console.error(`Migration failed: ${message}${code ? ` (code ${code})` : ""}`);
+  const h = hint(code, message);
+  if (h) console.error(h);
   process.exit(1);
 });
