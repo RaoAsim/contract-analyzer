@@ -9,7 +9,11 @@ const optionalString = z
 const intWithDefault = (def: number, min = 1) => z.coerce.number().int().min(min).default(def);
 
 const envSchema = z.object({
-  DATABASE_URL: z.string().min(1, "DATABASE_URL is required (Supabase Session pooler string)"),
+  DATABASE_URL: z
+    .string()
+    .min(1, "DATABASE_URL is required (Supabase Session pooler string)")
+    .refine((v) => !/[<>]/.test(v), "DATABASE_URL still contains a <placeholder> (e.g. <password>)")
+    .refine((v) => URL.canParse(v), "DATABASE_URL is not a valid URL (URL-encode special characters in the password)"),
   DATABASE_POOL_MAX: intWithDefault(8),
   SUPABASE_URL: z.string().url("SUPABASE_URL must be a URL like https://<ref>.supabase.co"),
   /** Server-only secret key (sb_secret_…). The legacy service_role JWT is accepted via SUPABASE_SERVICE_ROLE_KEY. */

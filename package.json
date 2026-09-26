@@ -16,7 +16,8 @@
     "storage:smoke": "tsx --conditions=react-server scripts/storage-smoke.ts",
     "fixtures": "tsx scripts/generate-fixtures.ts",
     "postinstall": "node scripts/copy-pdfjs-assets.mjs",
-    "e2e": "node scripts/e2e/run-all.mjs"
+    "e2e": "node scripts/e2e/run-all.mjs",
+    "llm:smoke": "tsx --conditions=react-server scripts/llm-smoke.ts"
   },
   "dependencies": {
     "@google/genai": "2.24.0",
