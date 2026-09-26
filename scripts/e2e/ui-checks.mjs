@@ -47,7 +47,7 @@ await page.getByRole("button", { name: "Send (Enter)" }).click();
 const chip = page.getByRole("button", { name: /^Source 1: verified quote/ });
 await chip.waitFor({ timeout: 60000 });
 await page.getByText(/quotes? verified/).first().waitFor({ timeout: 60000 });
-check("answer shows a verified citation chip and coverage badge", (await page.getByText(/Read \d+% of the document/).count()) > 0);
+check("answer shows a verified citation chip and coverage badge", (await page.getByText(/Based on \d+% of the document/).count()) > 0);
 await chip.click();
 const hl = page.locator('[data-page="142"] .citation-flash');
 await hl.first().waitFor({ timeout: 20000 });
@@ -71,6 +71,31 @@ await page.waitForTimeout(1500);
 const pagesWithHl = await page.$$eval(".citation-flash", (els) => [...new Set(els.map((e) => e.closest("[data-page]")?.getAttribute("data-page")))]);
 check("a quote across a page break highlights on both pages", pagesWithHl.length >= 2, `pages ${pagesWithHl.join(",")}`);
 await page.screenshot({ path: `${OUT}/03-highlight-page-break.png` });
+
+// Reported issues: double-click Send, message order, "Ask again", vague question → overview.
+await page.goto(`${BASE}/documents/${id("long_msa.pdf")}`);
+await page.getByRole("button", { name: "New chat" }).click().catch(() => {});
+await page.goto(`${BASE}/documents/${id("long_msa.pdf")}`);
+const before = (await (await fetch(`${BASE}/api/conversations?documentId=${id("long_msa.pdf")}`)).json()).conversations.length;
+await page.getByLabel("Ask a question about the document").fill("tell me abou ti");
+// A real double-click: the second click lands where Send was (now Stop) and must change nothing.
+await page.getByRole("button", { name: "Send (Enter)" }).dblclick();
+check("Send turns into Stop immediately (question shown at once)", (await page.getByText("tell me abou ti").count()) > 0 && (await page.getByRole("button", { name: /Stop generating/ }).count()) === 1);
+await page.getByText(/quotes? verified|No quotes/).last().waitFor({ timeout: 90000 });
+const after = (await (await fetch(`${BASE}/api/conversations?documentId=${id("long_msa.pdf")}`)).json()).conversations;
+check("a double-click on Send creates exactly one chat and doesn't stop it", after.length === before + 1 && !/Stopped/.test(await page.locator("article").last().innerText()), `${before} → ${after.length}`);
+const overviewText = await page.locator("article").last().innerText();
+check("a vague question gets an overview, not 'found no provision'", !/found no provision|found nothing that answers/i.test(overviewText) && /Overview/i.test(overviewText), overviewText.slice(0, 80).replace(/s+/g, " "));
+await page.reload();
+await page.locator('[data-testid="messages"]').waitFor({ timeout: 20000 });
+const order = await page.evaluate(() => {
+  const items = [...document.querySelectorAll('[data-testid="messages"] > li')];
+  return items.map((li) => (li.querySelector("article") ? "answer" : "question"));
+});
+check("after reload the question is above its answer", order.join(",") === "question,answer", order.join(","));
+await page.getByRole("button", { name: "Ask again" }).last().click();
+await page.waitForFunction(() => document.querySelectorAll('[data-testid="messages"] > li > article').length >= 2, null, { timeout: 90000 });
+check("'Ask again' re-asks the question", true);
 
 // Unverified quote (debug toggle), DOCX viewer highlight
 await page.goto(`${BASE}/documents/${id("msa_v1.docx")}?debugInjectFakeQuote=1`);

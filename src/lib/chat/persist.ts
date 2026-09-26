@@ -7,9 +7,13 @@ import type { Citation } from "@/types/citation";
 
 /** Insert the user message and a `streaming` assistant row before calling the LLM (§11.8). */
 export async function createTurn(conversationId: string, question: string): Promise<{ userMessageId: string; assistantMessageId: string }> {
+  // Explicit, strictly increasing timestamps: defaultNow() is the transaction start time, which would
+  // give the question and its answer the same created_at (and an arbitrary display order).
+  const asked = new Date();
+  const answered = new Date(asked.getTime() + 1);
   return getDb().transaction(async (tx) => {
-    const [u] = await tx.insert(messages).values({ conversationId, role: "user", content: question, status: "complete", completedAt: new Date() }).returning({ id: messages.id });
-    const [a] = await tx.insert(messages).values({ conversationId, role: "assistant", content: "", status: "streaming" }).returning({ id: messages.id });
+    const [u] = await tx.insert(messages).values({ conversationId, role: "user", content: question, status: "complete", createdAt: asked, updatedAt: asked, completedAt: asked }).returning({ id: messages.id });
+    const [a] = await tx.insert(messages).values({ conversationId, role: "assistant", content: "", status: "streaming", createdAt: answered, updatedAt: answered }).returning({ id: messages.id });
     // Title = first question (60 chars), set once.
     await tx
       .update(conversations)

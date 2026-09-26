@@ -33,12 +33,19 @@ export const COMPARISON_RULES = `COMPARISON RULES (more than one document)
 
 export type CoverageStatement = { kind: "full" | "retrieval" | "scan" | "mixed"; detail: string };
 
-export function answerSystemPrompt(coverage: string, multi: boolean): string {
+export const OVERVIEW_RULES = `THIS IS A GENERAL QUESTION ABOUT THE CONTRACT
+- The user wants an overview (or asked something too vague to look up). Do NOT reply [[NOT_FOUND]].
+- Give a short overview using only the text provided: what the contract is and who the parties are,
+  its purpose or scope, the term, money (fees, caps), key obligations, termination, liability and
+  governing law — only the points the text actually shows, each with a quote.
+- Keep it to 5–8 bullets, then one line offering to go deeper on any clause.`;
+
+export function answerSystemPrompt(coverage: string, multi: boolean, overview = false): string {
   return [
     "You are a contract analysis assistant. You answer questions using ONLY the contract text provided between <documents> tags. Do not use outside knowledge of law or of typical contracts to fill gaps.",
     EVIDENCE_RULES,
     `COVERAGE\n${coverage}`,
-    NOT_FOUND_RULE,
+    overview ? OVERVIEW_RULES : NOT_FOUND_RULE,
     multi ? COMPARISON_RULES : "",
     STYLE,
   ]

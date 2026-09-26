@@ -97,6 +97,16 @@ function answerText(messages) {
   const all = messages.map((m) => String(m.content ?? "")).join("\n");
   const q = /Question: (.*)$/s.exec(lastUser(messages))?.[1]?.trim() ?? "";
   const docs = [...all.matchAll(/<document tag="(D\d)" name="([^"]*)" coverage="([^"]*)">([\s\S]*?)<\/document>/g)];
+  if (all.includes("THIS IS A GENERAL QUESTION ABOUT THE CONTRACT")) {
+    // Overview: quote a few substantive sentences from the opening of each document.
+    const bullets = docs.flatMap(([, tag, , , body]) =>
+      sentences(body.split("OPENING OF THE DOCUMENT")[1] ?? body)
+        .filter((x) => /shall|means|may/.test(x))
+        .slice(0, 3)
+        .map((x) => `- <quote doc="${tag}">${x.replace(/^\s*\d+(\.\d+)*\s+/, "").slice(0, 300)}</quote>`),
+    );
+    return `Overview of the contract:\n\n${bullets.join("\n")}\n\nAsk about any clause to go deeper.`;
+  }
   const parts = [];
   for (const [, tag, name, , body] of docs) {
     const hits = best(body, q, 1);

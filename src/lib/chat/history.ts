@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { messages } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/llm/llm.types";
@@ -33,7 +33,7 @@ export async function loadHistory(conversationId: string, excludeIds: string[]):
         ...excludeIds.map((id) => ne(messages.id, id)),
       ),
     )
-    .orderBy(desc(messages.createdAt))
+    .orderBy(desc(messages.createdAt), asc(messages.role)) // newest first; answer before its question at the same instant
     .limit(40);
 
   const out: ChatMessage[] = [];

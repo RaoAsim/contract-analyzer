@@ -90,7 +90,7 @@ export async function listConversations(filter: { documentId?: string; kind?: "s
 export async function getConversation(id: string): Promise<ConversationDetail | null> {
   const [summary] = await summaries([id]);
   if (!summary) return null;
-  const rows = await getDb().select().from(messages).where(eq(messages.conversationId, id)).orderBy(asc(messages.createdAt));
+  const rows = await getDb().select().from(messages).where(eq(messages.conversationId, id)).orderBy(asc(messages.createdAt), desc(messages.role)); // same instant: "user" before "assistant"
   const views: MessageView[] = rows.map((m) => ({
     id: m.id,
     role: m.role,

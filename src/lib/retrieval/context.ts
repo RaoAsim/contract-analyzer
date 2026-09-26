@@ -60,6 +60,44 @@ export function topSectionsList(doc: DocData): string {
     .join("; ");
 }
 
+/**
+ * Context for overview questions on a large document: the outline, the opening of the document
+ * (title, parties, recitals) and the first lines of every top-level section, within the budget.
+ */
+export function overviewContext(tag: string, doc: DocData, budgetTokens: number): DocContext {
+  const outline = buildOutline(doc);
+  let available = Math.max(1500, budgetTokens - countTokens(outline) - OVERHEAD_TOKENS);
+  const ranges: Range[] = [];
+  const add = (start: number, end: number): boolean => {
+    if (end <= start) return true;
+    const t = countTokens(cleanSlice(doc, start, end));
+    if (t > available) return false;
+    ranges.push([start, end]);
+    available -= t;
+    return true;
+  };
+  // Opening: up to ~1,500 tokens (≈6,000 chars) from the start.
+  const firstTop = doc.sections.find((s) => s.level === 1 && s.number);
+  add(0, Math.min(doc.text.length, Math.max(firstTop?.start ?? 0, 0) + 1500, 6000));
+  // First ~350 characters of each top-level section, in order, while the budget lasts.
+  for (const s of doc.sections.filter((x) => x.level === 1 && !/^(Preamble|Page \d+|Part \d+)$/.test(x.title))) {
+    if (!add(s.start, Math.min(s.end, s.start + 350))) break;
+  }
+  const merged = mergeRanges(ranges);
+  const excerpts = merged.map(([s, e]) => `${heading(doc, s)}\n${cleanSlice(doc, s, e)}`);
+  const pct = Math.max(1, Math.round((100 * rangesLength(merged)) / Math.max(1, doc.contentChars)));
+  return {
+    tag,
+    doc,
+    mode: "retrieval",
+    body: `OUTLINE OF THE WHOLE DOCUMENT (titles only):\n${outline}\n\nOPENING OF THE DOCUMENT AND THE FIRST LINES OF EACH SECTION (about ${pct}% of the document; everything else was NOT provided):\n${excerpts.join("\n[…]\n")}`,
+    coverageAttr: `overview excerpts (about ${pct}%)`,
+    readRanges: merged,
+    contextRanges: merged,
+    noteForModel: "the opening and the first lines of each section",
+  };
+}
+
 export function fullContext(tag: string, doc: DocData): DocContext {
   const all: Range[] = [[0, doc.text.length]];
   return {

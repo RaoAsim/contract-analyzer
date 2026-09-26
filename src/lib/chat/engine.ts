@@ -4,7 +4,7 @@ import { runAgent } from "@/lib/agent/loop";
 import { getConfig } from "@/lib/config";
 import { chatJson } from "@/lib/llm/client";
 import type { ChatMessage } from "@/lib/llm/llm.types";
-import { fullContext, retrievalContext, topSectionsList } from "@/lib/retrieval/context";
+import { fullContext, overviewContext, retrievalContext, topSectionsList } from "@/lib/retrieval/context";
 import { planQueries } from "@/lib/retrieval/search";
 import type { QueryPlan } from "@/lib/retrieval/search.types";
 import { compressNumbers } from "@/lib/text/ranges";
@@ -12,6 +12,7 @@ import type { DocContext, RunContext, StreamOutcome } from "./chat.types";
 import type { CitationDoc } from "./citations";
 import { docCoverage, isDocComplete } from "./coverage";
 import { finish, notice } from "./finish";
+import { isOverviewQuestion } from "./intent";
 import { answerSystemPrompt, COVERAGE_FULL, COVERAGE_SCAN, coverageRetrieval, documentsBlock, TOPIC_PROMPT } from "./prompts";
 import { failedPagesLabel, findingsContext, scanDocuments } from "./scan";
 import { streamAnswer } from "./stream";
@@ -47,9 +48,9 @@ async function answer(
   ctx: RunContext,
   contexts: DocContext[],
   coverageText: string,
-  opts: { escalate: boolean; notFoundPrefix: string },
+  opts: { escalate: boolean; notFoundPrefix: string; overview?: boolean },
 ): Promise<StreamOutcome> {
-  const system: ChatMessage = { role: "system", content: answerSystemPrompt(coverageText, contexts.length > 1) };
+  const system: ChatMessage = { role: "system", content: answerSystemPrompt(coverageText, contexts.length > 1, opts.overview) };
   const block = documentsBlock(contexts.map((c) => ({ tag: c.tag, name: c.doc.name, coverageAttr: c.coverageAttr, body: c.body })));
   const citationDocs: CitationDoc[] = contexts.map((c) => ({ tag: c.tag, data: c.doc, contextRanges: c.contextRanges }));
   ctx.emit("status", { text: "Writing the answer…" });
@@ -135,6 +136,20 @@ export async function runStandard(ctx: RunContext): Promise<void> {
   const fits = ctx.docs.filter((d) => d.data.tokenCount <= perDocBudget);
   const large = ctx.docs.filter((d) => d.data.tokenCount > perDocBudget);
   const fitting = fits.map((d) => fullContext(d.tag, d.data));
+
+  // General / vague questions: overview from the outline + section openings. No planner, no scan.
+  const inDocument = (w: string): boolean => ctx.docs.some((d) => new RegExp(`\\b${w.replace(/[^a-z0-9]/g, "")}`, "i").test(d.data.text));
+  if (!ctx.options.thorough && isOverviewQuestion(ctx.question, inDocument)) {
+    const contexts: DocContext[] = [...fitting, ...large.map((d) => overviewContext(d.tag, d.data, perDocBudget))].sort((a, b) => a.tag.localeCompare(b.tag));
+    ctx.state.mode = large.length === 0 ? "full" : "retrieval";
+    const coverageText =
+      large.length === 0
+        ? COVERAGE_FULL
+        : coverageRetrieval(contexts.filter((c) => c.mode === "retrieval").map((c) => ({ tag: c.tag, sections: c.noteForModel ?? "", pct: Math.max(1, Math.round(docCoverage(c.doc, c.tag, c.readRanges).fraction * 100)) })));
+    const outcome = await answer(ctx, contexts, coverageText, { escalate: false, notFoundPrefix: "", overview: true });
+    finish(ctx, contexts.map((c) => docCoverage(c.doc, c.tag, c.readRanges)), outcome);
+    return;
+  }
 
   let plan: QueryPlan = { queries: [], sections: [], topic: null };
   if (large.length > 0) {

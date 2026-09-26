@@ -92,29 +92,29 @@ export function ChatPanel({ kind, documentId, conversationId, onConversationChan
     async (question: string, opts: SendOptions) => {
       const q = question.trim();
       if (!q || stream.busy) return;
-      let id = conversationId;
-      if (!id) {
-        if (!documentId) return;
-        try {
+      if (!conversationId && !documentId) return;
+      setInput("");
+      stick.current = true;
+      // The question shows at once; a new chat is created inside send() (never twice).
+      const target =
+        conversationId ??
+        (async () => {
           const r = await apiFetch<{ conversation: ConversationSummary }>("/api/conversations", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ documentIds: [documentId] }),
           });
-          id = r.conversation.id;
-          qc.setQueryData<ConversationDetail>(["conversation", id], { conversation: r.conversation, messages: [] });
-          onConversationChange(id);
-        } catch (e) {
-          toast.error(e instanceof Error ? e.message : "Couldn't start a new chat.");
-          return;
-        }
-      }
-      setInput("");
-      stick.current = true;
-      await stream.send(id, q, opts);
+          qc.setQueryData<ConversationDetail>(["conversation", r.conversation.id], { conversation: r.conversation, messages: [] });
+          onConversationChange(r.conversation.id);
+          return r.conversation.id;
+        });
+      await stream.send(target, q, opts);
     },
     [conversationId, documentId, onConversationChange, qc, stream],
   );
+
+  // The "click a source" hint shows on the most recent answer that has verified sources.
+  const firstWithSources = [...messages].reverse().find((m) => m.role === "assistant" && m.citations.some((c) => c.status === "verified" || c.status === "verified_close"))?.id;
 
   const questionBefore = (assistantId: string): string | undefined => {
     const i = messages.findIndex((m) => m.id === assistantId);
@@ -226,7 +226,7 @@ export function ChatPanel({ kind, documentId, conversationId, onConversationChan
         ) : messages.length === 0 ? (
           <EmptyChat multi={multi} onPick={(q) => void send(q, optionsFor(mode))} />
         ) : (
-          <ol className="space-y-6">
+          <ol className="space-y-6" data-testid="messages">
             {messages.map((m) => (
               <li key={m.id}>
                 {m.role === "user" ? (
@@ -243,12 +243,11 @@ export function ChatPanel({ kind, documentId, conversationId, onConversationChan
                       if (q) void send(q, optionsFor(mode));
                     }}
                     onThorough={() => {
+                      // One-off: re-ask this question reading the whole document; the mode stays as it was.
                       const q = questionBefore(m.id);
-                      if (q) {
-                        setMode("thorough");
-                        void send(q, { thorough: true });
-                      }
+                      if (q) void send(q, { thorough: true });
                     }}
+                    showHint={m.id === firstWithSources}
                   />
                 )}
               </li>
@@ -263,6 +262,7 @@ export function ChatPanel({ kind, documentId, conversationId, onConversationChan
         mode={mode}
         onModeChange={setMode}
         busy={stream.busy}
+        starting={stream.live?.assistant.live?.phase === "pending"}
         disabled={!ready || (multi && docs.every((d) => !d.documentId))}
         disabledReason={!ready ? "The document is still being processed…" : "All documents in this chat were deleted."}
         onSend={() => void send(input, optionsFor(mode))}

@@ -32,7 +32,7 @@ export function finish(ctx: RunContext, perDoc: CoverageDoc[], outcome: StreamOu
     notice(ctx, {
       code: "ABSENCE_UNVERIFIED",
       text,
-      action: ctx.state.mode === "retrieval" || ctx.state.mode === "agent" ? { kind: "thorough", label: "Check the entire document" } : undefined,
+      action: ctx.state.mode === "retrieval" || ctx.state.mode === "agent" ? { kind: "thorough", label: "Ask again, reading the whole document" } : undefined,
     });
   }
   for (const d of perDoc) {
