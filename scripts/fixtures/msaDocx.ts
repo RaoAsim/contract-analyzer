@@ -14,14 +14,17 @@ import {
 
 type Clause = { title: string; subs: (string | { text: string; items: string[] })[]; table?: string[][] };
 
-const DEFINITIONS: Clause = {
+const definitions = (v2: boolean): Clause => ({
   title: "Definitions",
   subs: [
     "“Agreement” means this master services agreement, including its schedules.",
     "“Services” means the managed IT services described in Schedule 1.",
-    "“Business Day” means a day other than a Friday, Saturday or public holiday in the United Arab Emirates.",
+    // v2: punctuation-only change (Oxford comma) → cosmetic short-circuit.
+    v2
+      ? "“Business Day” means a day other than a Friday, Saturday, or public holiday in the United Arab Emirates."
+      : "“Business Day” means a day other than a Friday, Saturday or public holiday in the United Arab Emirates.",
   ],
-};
+});
 
 const TERM: Clause = {
   title: "Term",
@@ -112,13 +115,13 @@ const governingLaw = (v2: boolean): Clause => ({
 
 /**
  * v1 → v2 changes (§18.1): liability cap AED 100,000 → 1,000,000; notice 30 → 60 days; shall → may;
- * one purely reworded sentence (3.3); Confidentiality moved; Non-Compete added; Audit Rights removed;
- * governing law changed.
+ * one purely reworded sentence (3.3); one punctuation-only change (1.3); Confidentiality moved;
+ * Non-Compete added; Audit Rights removed; governing law changed.
  */
 function clausesFor(v2: boolean): Clause[] {
   return v2
-    ? [DEFINITIONS, TERM, servicesClause(true), FEES, liability(true), termination(true), DATA_PROTECTION, CONFIDENTIALITY, NON_COMPETE, governingLaw(true)]
-    : [DEFINITIONS, TERM, servicesClause(false), FEES, CONFIDENTIALITY, liability(false), termination(false), DATA_PROTECTION, AUDIT, governingLaw(false)];
+    ? [definitions(v2), TERM, servicesClause(true), FEES, liability(true), termination(true), DATA_PROTECTION, CONFIDENTIALITY, NON_COMPETE, governingLaw(true)]
+    : [definitions(v2), TERM, servicesClause(false), FEES, CONFIDENTIALITY, liability(false), termination(false), DATA_PROTECTION, AUDIT, governingLaw(false)];
 }
 
 export function buildMsaDocx(v2: boolean): Promise<Buffer> {
