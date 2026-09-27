@@ -19,7 +19,8 @@ function init(): { sql: postgres.Sql; db: Db } {
     const cfg = getConfig();
     const client = postgres(cfg.DATABASE_URL, {
       max: cfg.DATABASE_POOL_MAX,
-      idle_timeout: 20,
+      idle_timeout: 240,
+      max_lifetime: 60 * 30,
       connect_timeout: 15,
       onnotice: () => {},
     });

@@ -8,10 +8,10 @@ import { distance } from "fastest-levenshtein";
  */
 
 const OVERVIEW =
-  /\b(summar(y|ise|ize)|overview|outline|gist|tl;?dr|highlights?|important|key (terms|points|provisions|clauses|things)|main (terms|points|provisions|things)|red flags|what (is|'s) (this|it|the (document|contract|agreement))( about)?|what does (this|it|the (document|contract|agreement)) (do|cover|say)( overall)?|tell me (abou?t?|more)|explain (this|it|the (document|contract|agreement)))\b/i;
+  /\b(summar(y|ise|ize)|overview|outline|gist|tl;?dr|highlights?|important|key (terms|points|provisions|clauses|things)|main (terms|points|provisions|things)|red flags|what (is|'s) (this|it|the (document|contract|agreement))( about)?|what does (this|it|the (document|contract|agreement)) (do|cover|say)( overall)?|tell me (abou?t?|more)|(who|what) (are|is) the parties|explain (this|it|the (document|contract|agreement)))\b/i;
 
 /** Words that ask for an overview; matched with typo tolerance ("hightlight", "sumary"). */
-const OVERVIEW_WORDS = ["summary", "summarize", "summarise", "overview", "highlight", "highlights", "important", "key", "main", "gist", "outline", "essentials", "basics"];
+const OVERVIEW_WORDS = ["summary", "summarize", "summarise", "overview", "highlight", "highlights", "important", "key", "main", "gist", "outline", "essentials", "basics", "parties"];
 
 /** Words that carry no search meaning in a question. */
 const FILLER = new Set(

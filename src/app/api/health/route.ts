@@ -31,9 +31,11 @@ export async function GET(): Promise<NextResponse<HealthResponse>> {
   } catch {
     configOk = false;
   }
+  const dbStart = Date.now();
   const database = configOk ? await check(() => getDb().execute(sql`select 1`)) : "error";
+  const dbLatencyMs = Date.now() - dbStart;
   const storage = configOk ? await check(() => bucketReachable()) : "error";
   const worker: HealthResponse["worker"] = runWorker ? workerStatus() : "disabled";
   const ok = database === "ok" && storage === "ok" && worker !== "stopped";
-  return NextResponse.json({ ok, database, storage, worker }, { status: ok ? 200 : 503 });
+  return NextResponse.json({ ok, database, dbLatencyMs, storage, worker }, { status: ok ? 200 : 503 });
 }

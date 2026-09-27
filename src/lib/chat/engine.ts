@@ -54,11 +54,13 @@ async function answer(
   const block = documentsBlock(contexts.map((c) => ({ tag: c.tag, name: c.doc.name, coverageAttr: c.coverageAttr, body: c.body })));
   const citationDocs: CitationDoc[] = contexts.map((c) => ({ tag: c.tag, data: c.doc, contextRanges: c.contextRanges }));
   ctx.emit("status", { text: "Writing the answer…" });
-  return streamAnswer(ctx, [system, ...ctx.history, userTurn(ctx.question, block)], citationDocs, {
+  const outcome = await streamAnswer(ctx, [system, ...ctx.history, userTurn(ctx.question, block)], citationDocs, {
     escalateOnNotFound: opts.escalate,
     notFoundPrefix: opts.notFoundPrefix,
     label: `answer-${ctx.state.mode}`,
   });
+  ctx.mark?.(opts.escalate && outcome.notFound ? "answer (escalating)" : "answer");
+  return outcome;
 }
 
 function writeServerText(ctx: RunContext, text: string): void {
@@ -75,6 +77,7 @@ function pagesPhrase(n: number | null, kind: "pdf" | "docx"): string {
 async function runScan(ctx: RunContext, plan: QueryPlan, fitting: DocContext[], scanDocs: { tag: string; data: RunContext["docs"][number]["data"] }[]): Promise<void> {
   ctx.state.mode = "scan";
   const results = await scanDocuments(ctx, scanDocs.map((d) => ({ tag: d.tag, doc: d.data })), ctx.question);
+  ctx.mark?.("scan");
   const scanCoverage = results.map((r) => docCoverage(r.doc, r.tag, r.okRanges, { failedRanges: r.failedRanges }));
   const fullCoverage = fitting.map((c) => docCoverage(c.doc, c.tag, c.readRanges));
   const perDoc = [...fullCoverage, ...scanCoverage].sort((a, b) => a.tag.localeCompare(b.tag));
@@ -155,6 +158,7 @@ export async function runStandard(ctx: RunContext): Promise<void> {
     ctx.emit("status", { text: "Finding relevant sections…" });
     const p = await planQueries(ctx.question, topSectionsList(large[0]!.data), ctx.signal);
     plan = p.plan;
+    ctx.mark?.("plan");
     if (p.usage) {
       ctx.state.usage.inputTokens += p.usage.inputTokens;
       ctx.state.usage.outputTokens += p.usage.outputTokens;
@@ -170,6 +174,15 @@ export async function runStandard(ctx: RunContext): Promise<void> {
   const contexts: DocContext[] = [...fitting];
   for (const d of large) contexts.push(await retrievalContext(d.tag, d.data, ctx.question, plan, perDocBudget));
   contexts.sort((a, b) => a.tag.localeCompare(b.tag));
+  ctx.mark?.("retrieve");
+  // No passage matched at all: an answer from the outline alone can only say "not found", so skip
+  // that call and read the whole document straight away.
+  if (large.length > 0 && contexts.filter((c) => c.mode === "retrieval").every((c) => c.readRanges.length === 0)) {
+    notice(ctx, { code: "ESCALATING", text: "No section matched the question directly — reading the whole document…" });
+    ctx.emit("status", { text: "Reading the whole document…" });
+    await runScan(ctx, plan, fitting, large);
+    return;
+  }
   ctx.state.mode = large.length === 0 ? "full" : "retrieval";
 
   const coverageText =

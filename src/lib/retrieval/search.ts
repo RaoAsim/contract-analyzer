@@ -14,7 +14,7 @@ const STOPWORDS = new Set(
   "the a an and or of to in for on by with is are was were be been being this that these those what which who whom whose when where why how does do did can could should would may might must shall will there their them they it its as at from into about any all each every under over than then also not no nor if but so such".split(" "),
 );
 /** Words present in almost every chunk of a contract: they swamp ts_rank in an OR query. */
-const CONTRACT_STOPWORDS = new Set("agreement agreements contract contracts party parties clause clauses section sections document terms term hereof herein thereof".split(" "));
+const CONTRACT_STOPWORDS = new Set("agreement agreements contract contracts party parties clause clauses section sections document hereof herein thereof".split(" "));
 
 const hitColumns = {
   id: chunks.id,

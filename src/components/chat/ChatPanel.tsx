@@ -20,10 +20,10 @@ import type { ComposerMode } from "./Composer.types";
 import { DocTag } from "./DocTag";
 
 const SINGLE_SUGGESTIONS = [
-  "What is the term and how does it renew?",
-  "What are the termination rights?",
-  "Is there a cap on liability?",
-  "Which law governs the agreement?",
+  "Summarize this contract",
+  "Who are the parties?",
+  "What is the liability cap?",
+  "How can the agreement be terminated?",
 ];
 const MULTI_SUGGESTIONS = [
   "How do the liability caps differ?",

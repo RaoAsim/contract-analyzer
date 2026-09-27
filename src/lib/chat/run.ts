@@ -22,6 +22,9 @@ export async function startAnswer(conversationId: string, question: string, opti
   if (runRegistry.isActive(conversationId)) throw new ApiError(409, "busy", "An answer is still being generated. Stop it or wait for it to finish.");
 
   const links = await conversationDocs(conversationId);
+  const t0 = Date.now();
+  const marks: [string, number][] = [];
+  const mark = (stage: string): void => void marks.push([stage, Date.now()]);
   const docs: ChatDoc[] = [];
   for (const l of links) {
     const data = await loadDocData(l.documentId);
@@ -32,7 +35,9 @@ export async function startAnswer(conversationId: string, question: string, opti
   }
 
   const { userMessageId, assistantMessageId } = await createTurn(conversationId, question);
+  mark("load");
   const history = await loadHistory(conversationId, [userMessageId, assistantMessageId]);
+  mark("turn");
   const controller = runRegistry.start(conversationId, assistantMessageId);
 
   const writer = new SseWriter(() => runRegistry.stop(assistantMessageId, "disconnect"));
@@ -55,6 +60,7 @@ export async function startAnswer(conversationId: string, question: string, opti
     flush: flusher.request,
     nextCitationId: () => `c${++n}`,
     startedAt: Date.now(),
+    mark,
   };
 
   writer.send("meta", {
@@ -107,6 +113,15 @@ export async function startAnswer(conversationId: string, question: string, opti
       } catch (e) {
         console.error(`[chat] could not persist answer ${assistantMessageId}:`, e);
       }
+      mark("persist");
+      // One line per answer: where the time went (DB vs AI). No content, no keys.
+      let prev = t0;
+      const parts = marks.map(([s, t]) => {
+        const d = t - prev;
+        prev = t;
+        return `${s} ${d}ms`;
+      });
+      console.log(`[chat] ${assistantMessageId.slice(0, 8)} ${state.mode} ${status} in ${Date.now() - t0}ms: ${parts.join(" · ")} (llm calls=${state.usage.calls})`);
       runRegistry.finish(assistantMessageId);
       writer.send("done", { status: status === "stopped" ? "stopped" : status === "error" ? "error" : "complete", messageId: assistantMessageId });
       writer.close();

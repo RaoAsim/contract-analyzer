@@ -49,6 +49,8 @@ export type RunContext = {
   flush: () => void;
   nextCitationId: () => string;
   startedAt: number;
+  /** Records the end of a stage for the per-answer timing log line. */
+  mark?: (stage: string) => void;
 };
 
 export type StreamOutcome = { notFound: boolean; stopped: boolean; text: string; finishReason: string | null };
