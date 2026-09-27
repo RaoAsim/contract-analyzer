@@ -74,27 +74,22 @@ export function sectionRefs(question: string): string[] {
 
 async function keywordSearch(documentId: string, websearch: string | null, orq: string | null, limit = 20): Promise<string[]> {
   const db = getDb();
-  const out: string[] = [];
-  if (websearch) {
-    const q = sql`websearch_to_tsquery('english', ${websearch})`;
-    const rows = await db
-      .select({ id: chunks.id })
-      .from(chunks)
-      .where(and(eq(chunks.documentId, documentId), sql`${chunks.tsv} @@ ${q}`))
-      .orderBy(sql`ts_rank_cd(${chunks.tsv}, ${q}) desc`)
-      .limit(limit);
-    out.push(...rows.map((r) => r.id));
-  }
-  if (orq && out.length < limit) {
-    const q = sql`to_tsquery('english', ${orq})`;
-    const rows = await db
-      .select({ id: chunks.id })
-      .from(chunks)
-      .where(and(eq(chunks.documentId, documentId), sql`${chunks.tsv} @@ ${q}`))
-      .orderBy(sql`ts_rank_cd(${chunks.tsv}, ${q}) desc`)
-      .limit(limit);
-    for (const r of rows) if (!out.includes(r.id)) out.push(r.id);
-  }
+  const run = async (q: ReturnType<typeof sql>): Promise<string[]> =>
+    (
+      await db
+        .select({ id: chunks.id })
+        .from(chunks)
+        .where(and(eq(chunks.documentId, documentId), sql`${chunks.tsv} @@ ${q}`))
+        .orderBy(sql`ts_rank_cd(${chunks.tsv}, ${q}) desc`)
+        .limit(limit)
+    ).map((r) => r.id);
+  // Both legs in parallel (each is a network round trip); the precise one ranks first.
+  const [precise, loose] = await Promise.all([
+    websearch ? run(sql`websearch_to_tsquery('english', ${websearch})`) : Promise.resolve<string[]>([]),
+    orq ? run(sql`to_tsquery('english', ${orq})`) : Promise.resolve<string[]>([]),
+  ]);
+  const out = [...precise];
+  for (const id of loose) if (out.length < limit && !out.includes(id)) out.push(id);
   return out;
 }
 
@@ -113,15 +108,17 @@ async function phraseSearch(documentId: string, phrase: string): Promise<string[
 async function sectionLookup(doc: DocData, numbers: string[]): Promise<string[]> {
   const secs = doc.sections.filter((s) => s.number && numbers.some((n) => s.number === n || s.number!.startsWith(`${n}.`)));
   const out: string[] = [];
-  for (const s of secs.slice(0, 6)) {
-    const rows = await getDb()
-      .select({ id: chunks.id })
-      .from(chunks)
-      .where(and(eq(chunks.documentId, doc.id), lte(chunks.charStart, s.end - 1), gte(chunks.charEnd, s.start + 1)))
-      .orderBy(asc(chunks.ord))
-      .limit(6);
-    for (const r of rows) if (!out.includes(r.id)) out.push(r.id);
-  }
+  const perSection = await Promise.all(
+    secs.slice(0, 6).map((s) =>
+      getDb()
+        .select({ id: chunks.id })
+        .from(chunks)
+        .where(and(eq(chunks.documentId, doc.id), lte(chunks.charStart, s.end - 1), gte(chunks.charEnd, s.start + 1)))
+        .orderBy(asc(chunks.ord))
+        .limit(6),
+    ),
+  );
+  for (const rows of perSection) for (const r of rows) if (!out.includes(r.id)) out.push(r.id);
   return out;
 }
 
@@ -135,9 +132,13 @@ export async function searchDocument(doc: DocData, question: string, plan: Query
     variants.map((v, i) => keywordSearch(doc.id, i === 0 ? null : v, orQuery(v))),
   );
   results.forEach((ids) => lists.push({ ids }));
-  for (const p of boostPhrases(question)) lists.push({ ids: await phraseSearch(doc.id, p), weight: 1.5 });
   const refs = [...new Set([...sectionRefs(question), ...plan.sections])];
-  if (refs.length > 0) lists.push({ ids: await sectionLookup(doc, refs), weight: 3 });
+  const [phrases, sectionIds] = await Promise.all([
+    Promise.all(boostPhrases(question).map((p) => phraseSearch(doc.id, p))),
+    refs.length > 0 ? sectionLookup(doc, refs) : Promise.resolve(null),
+  ]);
+  for (const ids of phrases) lists.push({ ids, weight: 1.5 });
+  if (sectionIds) lists.push({ ids: sectionIds, weight: 3 });
   return { lists };
 }
 

@@ -74,7 +74,16 @@ function SourceRow({ c, n, docName, multi, onOpen }: { c: Citation; n: number; d
 
 /** Verified sources (click to highlight), then a collapsed "Unverified" group (§11.7). */
 export function SourcesList({ citations, numbers, docName, multi, onOpen }: Props): React.ReactElement | null {
-  const verified = citations.filter(isVerified).sort((a, b) => (numbers.get(a.id) ?? 99) - (numbers.get(b.id) ?? 99));
+  const seen = new Set<number>();
+  const verified = citations
+    .filter(isVerified)
+    .sort((a, b) => (numbers.get(a.id) ?? 99) - (numbers.get(b.id) ?? 99))
+    .filter((c) => {
+      const n = numbers.get(c.id) ?? -1;
+      if (seen.has(n)) return false; // same passage cited twice: one row
+      seen.add(n);
+      return true;
+    });
   const unverified = citations.filter((c) => !isVerified(c));
   if (verified.length === 0 && unverified.length === 0) return null;
   return (

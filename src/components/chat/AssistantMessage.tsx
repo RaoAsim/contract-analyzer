@@ -107,7 +107,7 @@ export function AssistantMessage({ message: m, docName, multi, onOpenCitation, o
           </div>
         )}
 
-        <NoticeList notices={m.notices} onThorough={onThorough} disabled={busy} />
+        <NoticeList notices={running ? m.notices : m.notices.filter((n) => n.code !== "ESCALATING")} onThorough={onThorough} disabled={busy} />
 
         {!running && verified > 0 && showHint && (
           <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">

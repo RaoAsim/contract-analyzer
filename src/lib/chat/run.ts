@@ -1,6 +1,6 @@
 import "server-only";
 import { ApiError } from "@/lib/api/errors";
-import { conversationDocs, getConversation } from "@/lib/db/queries/conversations";
+import { conversationDocs, conversationKind } from "@/lib/db/queries/conversations";
 import { LlmUnavailableError } from "@/lib/llm/client";
 import { loadDocData } from "@/lib/text/cache";
 import type { MessageStatus } from "@/types/chat";
@@ -17,21 +17,17 @@ import { SSE_HEADERS, SseWriter } from "./sse";
  * exactly one `done`.
  */
 export async function startAnswer(conversationId: string, question: string, options: ChatOptions, reqSignal: AbortSignal): Promise<Response> {
-  const convo = await getConversation(conversationId);
-  if (!convo) throw new ApiError(404, "not_found", "This chat was not found. It may have been deleted.");
-  if (runRegistry.isActive(conversationId)) throw new ApiError(409, "busy", "An answer is still being generated. Stop it or wait for it to finish.");
-
-  const links = await conversationDocs(conversationId);
   const t0 = Date.now();
   const marks: [string, number][] = [];
   const mark = (stage: string): void => void marks.push([stage, Date.now()]);
-  const docs: ChatDoc[] = [];
-  for (const l of links) {
-    const data = await loadDocData(l.documentId);
-    if (data) docs.push({ tag: l.tag, data });
-  }
+  if (runRegistry.isActive(conversationId)) throw new ApiError(409, "busy", "An answer is still being generated. Stop it or wait for it to finish.");
+  const [kind, links] = await Promise.all([conversationKind(conversationId), conversationDocs(conversationId)]);
+  if (!kind) throw new ApiError(404, "not_found", "This chat was not found. It may have been deleted.");
+
+  const loaded = await Promise.all(links.map(async (l) => ({ tag: l.tag, data: await loadDocData(l.documentId) })));
+  const docs: ChatDoc[] = loaded.filter((d): d is ChatDoc => d.data !== null);
   if (docs.length === 0) {
-    throw new ApiError(409, "no_documents", convo.conversation.kind === "multi" ? "All documents in this chat were deleted." : "This document is not ready yet.");
+    throw new ApiError(409, "no_documents", kind === "multi" ? "All documents in this chat were deleted." : "This document is not ready yet.");
   }
 
   const { userMessageId, assistantMessageId } = await createTurn(conversationId, question);

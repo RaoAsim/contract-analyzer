@@ -16,9 +16,17 @@ export function isVerified(c: Citation): boolean {
 export function citationNumbers(content: string, citations: Citation[]): Map<string, number> {
   const byId = new Map(citations.map((c) => [c.id, c]));
   const out = new Map<string, number>();
+  const byPassage = new Map<string, number>();
+  let next = 1;
   for (const m of content.matchAll(/⟦(c\d+)⟧/g)) {
     const c = byId.get(m[1]!);
-    if (c && isVerified(c) && !out.has(c.id)) out.set(c.id, out.size + 1);
+    if (!c || !isVerified(c) || out.has(c.id)) continue;
+    // The same passage cited twice gets the same number (and one row under Sources).
+    const o = c.occurrences[c.primary];
+    const key = o ? `${c.docId}:${o.start}:${o.end}` : c.id;
+    const n = byPassage.get(key) ?? next++;
+    byPassage.set(key, n);
+    out.set(c.id, n);
   }
   return out;
 }

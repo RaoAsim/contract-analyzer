@@ -113,6 +113,12 @@ export async function deleteConversation(id: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+/** "single" | "multi", or null if the chat doesn't exist (one small query, for starting an answer). */
+export async function conversationKind(id: string): Promise<"single" | "multi" | null> {
+  const [row] = await getDb().select({ kind: conversations.kind }).from(conversations).where(eq(conversations.id, id));
+  return row?.kind ?? null;
+}
+
 /** The documents a run can use: tag → document id, only for documents that still exist. */
 export async function conversationDocs(id: string): Promise<{ tag: string; documentId: string; name: string }[]> {
   const rows = await getDb()

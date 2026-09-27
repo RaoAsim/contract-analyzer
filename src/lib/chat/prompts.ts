@@ -44,6 +44,8 @@ export const OVERVIEW_RULES = `THIS IS A GENERAL QUESTION ABOUT THE CONTRACT
 - Give a short overview using only the text provided: what the contract is and who the parties are,
   its purpose or scope, the term, money (fees, caps), key obligations, termination, liability and
   governing law — only the points the text actually shows, each with a quote.
+- Include only points the text supports. Do not list what is missing and do not describe the text
+  you were given ("excerpts", "table of contents", "opening lines").
 - Keep it to 5–8 bullets, then one line offering to go deeper on any clause.`;
 
 export function answerSystemPrompt(coverage: string, multi: boolean, overview = false): string {

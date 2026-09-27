@@ -7,10 +7,20 @@ import { DocMatchIndex } from "./matchIndex";
 import { rangesLength } from "./ranges";
 
 const MAX_DOCS = 12;
-const cache = new Map<string, DocData>();
+const RECHECK_MS = 60_000;
+
+// On globalThis so the cache (and its prebuilt match indexes) survives dev-server module reloads,
+// the same way the DB pool does. Without it every question re-downloaded the whole document.
+type CacheGlobal = { __caDocCache?: Map<string, DocData>; __caDocChecked?: Map<string, number> };
+const g = globalThis as unknown as CacheGlobal;
+const cache = (g.__caDocCache ??= new Map<string, DocData>());
+const checkedAt = (g.__caDocChecked ??= new Map<string, number>());
 
 /** Load a READY document with pages, sections and a lazily-built match index (LRU of ~12, §9.7). */
 export async function loadDocData(id: string): Promise<DocData | null> {
+  // Confirmed ready very recently: skip the round trip. Deletion evicts explicitly.
+  const recent = cache.get(id);
+  if (recent && Date.now() - (checkedAt.get(id) ?? 0) < RECHECK_MS) return recent;
   const db = getDb();
   const [meta] = await db
     .select({ processedAt: documents.processedAt, status: documents.status })
@@ -25,6 +35,7 @@ export async function loadDocData(id: string): Promise<DocData | null> {
   if (hit && hit.version === version) {
     cache.delete(id);
     cache.set(id, hit); // refresh LRU position
+    checkedAt.set(id, Date.now());
     return hit;
   }
 
@@ -83,10 +94,12 @@ export async function loadDocData(id: string): Promise<DocData | null> {
     version,
   };
   cache.set(id, data);
+  checkedAt.set(id, Date.now());
   while (cache.size > MAX_DOCS) cache.delete(cache.keys().next().value!);
   return data;
 }
 
 export function evictDocData(id: string): void {
   cache.delete(id);
+  checkedAt.delete(id);
 }

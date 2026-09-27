@@ -60,6 +60,52 @@ export function topSectionsList(doc: DocData): string {
     .join("; ");
 }
 
+const TOC_LINE = /(\.{4,}|…{2,}|(\s\.){3,})\s*\d+\s*$/;
+
+function withoutTocLines(text: string): string {
+  return text
+    .split("\n")
+    .filter((l) => !TOC_LINE.test(l))
+    .join("\n");
+}
+
+/** Topics an overview should cover; the first matching pattern (in order) wins. */
+const KEY_TOPICS: RegExp[][] = [
+  [/\bterm of (this|the) agreement\b/i, /\binitial term\b/i, /\bshall (commence|continue)\b/i, /\brenew/i],
+  [/\b(total|aggregate) liability\b/i, /\bliability cap\b/i, /\bshall not be liable\b/i],
+  [/\bterminate this agreement\b/i, /\bmay terminate\b/i],
+  [/\bgoverned by\b/i, /\bgoverning law\b/i],
+  [/\b(fees|charges)\b[^.\n]{0,120}\b(pay|payable|invoice|within)\b/i, /\bshall pay\b/i],
+  [/\bconfidential information\b/i],
+  [/\bindemnif/i],
+  [/\bforce majeure event\b/i, /\bforce majeure\b/i],
+  [/\bintellectual property\b/i],
+  [/\bpersonal data\b/i, /\bdata protection\b/i],
+];
+
+/** Canonical ranges (≈ a paragraph) around the first real occurrence of each key topic. */
+function keyPassages(doc: DocData): Range[] {
+  const out: Range[] = [];
+  const inFurniture = (pos: number): boolean => doc.furniture.some(([s, e]) => pos >= s && pos < e);
+  for (const patterns of KEY_TOPICS) {
+    let found: number | null = null;
+    for (const re of patterns) {
+      const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+      for (let m = g.exec(doc.text); m && found === null; m = g.exec(doc.text)) {
+        const lineStart = doc.text.lastIndexOf("\n", m.index) + 1;
+        const lineEnd = doc.text.indexOf("\n", m.index);
+        const line = doc.text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
+        // Skip TOC entries, page furniture and bare headings ("20. LIMITATION OF LIABILITY").
+        if (TOC_LINE.test(line) || inFurniture(m.index) || line.trim().split(/\s+/).length < 6) continue;
+        found = lineStart;
+      }
+      if (found !== null) break;
+    }
+    if (found !== null) out.push([found, Math.min(doc.text.length, found + 700)]);
+  }
+  return out;
+}
+
 /**
  * Context for overview questions on a large document: the outline, the opening of the document
  * (title, parties, recitals) and the first lines of every top-level section, within the budget.
@@ -76,21 +122,23 @@ export function overviewContext(tag: string, doc: DocData, budgetTokens: number)
     available -= t;
     return true;
   };
-  // Opening: up to ~1,500 tokens (≈6,000 chars) from the start.
+  // Opening (title, parties, recitals): up to the first numbered section, capped.
   const firstTop = doc.sections.find((s) => s.level === 1 && s.number);
-  add(0, Math.min(doc.text.length, Math.max(firstTop?.start ?? 0, 0) + 1500, 6000));
+  add(0, Math.min(doc.text.length, Math.max(firstTop?.start ?? 0, 0) + 1200, 5000));
+  // The first real passage on each key topic, found in the text (skipping the TOC and page furniture).
+  for (const [start, end] of keyPassages(doc)) add(start, end);
   // First ~350 characters of each top-level section, in order, while the budget lasts.
   for (const s of doc.sections.filter((x) => x.level === 1 && !/^(Preamble|Page \d+|Part \d+)$/.test(x.title))) {
     if (!add(s.start, Math.min(s.end, s.start + 350))) break;
   }
   const merged = mergeRanges(ranges);
-  const excerpts = merged.map(([s, e]) => `${heading(doc, s)}\n${cleanSlice(doc, s, e)}`);
+  const excerpts = merged.map(([s, e]) => `${heading(doc, s)}\n${withoutTocLines(cleanSlice(doc, s, e))}`).filter((x) => x.trim().split("\n").length > 1);
   const pct = Math.max(1, Math.round((100 * rangesLength(merged)) / Math.max(1, doc.contentChars)));
   return {
     tag,
     doc,
     mode: "retrieval",
-    body: `OUTLINE OF THE WHOLE DOCUMENT (titles only):\n${outline}\n\nOPENING OF THE DOCUMENT AND THE FIRST LINES OF EACH SECTION (about ${pct}% of the document; everything else was NOT provided):\n${excerpts.join("\n[…]\n")}`,
+    body: `OUTLINE OF THE WHOLE DOCUMENT (titles only):\n${outline}\n\nTHE OPENING, THE KEY CLAUSES AND THE FIRST LINES OF EACH SECTION (about ${pct}% of the document; everything else was NOT provided):\n${excerpts.join("\n[…]\n")}`,
     coverageAttr: `overview excerpts (about ${pct}%)`,
     readRanges: merged,
     contextRanges: merged,
