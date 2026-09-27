@@ -30,6 +30,7 @@ export async function streamAnswer(
   if (ctx.signal.aborted) child.abort(ctx.signal.reason);
   ctx.signal.addEventListener("abort", onParentAbort);
 
+  const citationsBefore = ctx.state.citations.length;
   let notFound = false;
   let escalated = false;
   const defaultTag = citationDocs[0]?.tag ?? "D1";
@@ -127,6 +128,10 @@ export async function streamAnswer(
   } finally {
     ctx.signal.removeEventListener("abort", onParentAbort);
   }
+  // Safety net: the model sometimes writes quotes as plain "…" text instead of <quote> tags.
+  // Verify those passages; genuine ones become numbered sources (the saved answer carries them).
+  if (!notFound && ctx.state.citations.length === citationsBefore) recoverPlainQuotes(ctx, citationDocs);
+
   const stopNotice =
     finishReason === "length"
       ? { code: "ANSWER_TRUNCATED", text: "The answer reached its length limit and may be incomplete." }
@@ -140,4 +145,30 @@ export async function streamAnswer(
     ctx.emit("notice", stopNotice);
   }
   return { notFound, stopped, text: raw, finishReason };
+}
+
+const PLAIN_QUOTE = /"([^"\n]{25,800})"|“([^”\n]{25,800})”/g;
+
+/** Turn verified plain-quoted passages in the answer into citations (⟦cN⟧ tokens). */
+function recoverPlainQuotes(ctx: RunContext, docs: CitationDoc[]): void {
+  let changed = false;
+  const content = ctx.state.content.replace(PLAIN_QUOTE, (whole: string, a: string | undefined, b: string | undefined) => {
+    const text = (a ?? b ?? "").trim();
+    if (text.split(/\s+/).length < 5) return whole; // a defined term or a short phrase, not a quote
+    for (const d of docs) {
+      const id = ctx.nextCitationId();
+      const c = buildCitation(id, docs, d.tag, text);
+      if (c.status === "verified" || c.status === "verified_close") {
+        ctx.state.citations.push(c);
+        ctx.emit("citation", c);
+        changed = true;
+        return `⟦${id}⟧`;
+      }
+    }
+    return whole; // not in any document: leave it as plain text (it is not shown as a source)
+  });
+  if (changed) {
+    ctx.state.content = content;
+    ctx.flush();
+  }
 }

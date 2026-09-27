@@ -8,13 +8,17 @@ import type { Citation } from "@/types/citation";
 
 const HISTORY_TOKENS = 3000;
 
-/** Replace ⟦cN⟧ tokens with the document's own quoted text; unverified quotes are dropped. */
+/**
+ * Replace ⟦cN⟧ tokens with the verified quote in the SAME <quote> tag format the model must write.
+ * (Rendering them as plain "…" made the model imitate that and stop using tags.) Unverified quotes
+ * are dropped.
+ */
 export function renderForHistory(content: string, citations: Citation[]): string {
   const byId = new Map(citations.map((c) => [c.id, c]));
   return content.replace(/⟦(c\d+)⟧/g, (_, id: string) => {
     const c = byId.get(id);
     if (!c || !c.displayText || (c.status !== "verified" && c.status !== "verified_close")) return "";
-    return ` "${c.displayText}" `;
+    return ` <quote doc="${c.docTag}">${c.displayText}</quote> `;
   });
 }
 
