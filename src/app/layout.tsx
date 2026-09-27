@@ -17,9 +17,11 @@ export default function RootLayout({ children }: LayoutProps<"/">): React.ReactE
   return (
     <html
       lang="en"
+      // Browser extensions (e.g. ColorZilla adds cz-shortcut-listen) edit <html>/<body> before React loads.
+      suppressHydrationWarning
       className={`${inter.variable} ${sourceSerif.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col">
+      <body className="flex min-h-full flex-col" suppressHydrationWarning>
         <Providers>
           <AppHeader />
           <div className="flex min-h-0 flex-1 flex-col">{children}</div>
