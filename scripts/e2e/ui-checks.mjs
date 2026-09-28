@@ -4,7 +4,7 @@ import path from "node:path";
 import { chromium } from "playwright-core";
 
 const BASE = process.env.E2E_BASE ?? "http://127.0.0.1:3100";
-const OUT = path.resolve("docs/screenshots");
+const OUT = path.resolve(".e2e/screenshots"); // harness screenshots; the README uses screenshots/
 const FIX = path.resolve("tests/fixtures");
 fs.mkdirSync(OUT, { recursive: true });
 const results = [];

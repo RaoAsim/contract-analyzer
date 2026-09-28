@@ -164,7 +164,7 @@ async function main() {
     start("fakes", process.execPath, [path.join(HERE, "fakes.mjs")]);
     await waitForTcp(5433);
     await waitForTcp(5544);
-    if (!run("Migrations", "npx", ["tsx", "scripts/migrate.ts"])) throw new Error("migrations failed");
+    if (!run("Migrations", process.execPath, ["scripts/migrate.mjs"])) throw new Error("migrations failed");
     if (!noBuild && !run("Build", "npx", ["next", "build"])) throw new Error("build failed");
     let app = startApp();
     await waitFor(`${BASE}/api/health`, "app");

@@ -34,8 +34,6 @@ yarn-error.log*
 .env*
 !.env.example
 
-# vercel
-.vercel
 
 # typescript
 *.tsbuildinfo
@@ -46,3 +44,6 @@ next-env.d.ts
 
 # end-to-end harness logs
 /.e2e/
+
+# Supabase CLI local state
+/supabase/.temp/

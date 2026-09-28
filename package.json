@@ -1,6 +1,8 @@
 {
   "name": "contract-analyzer",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "Ask questions about legal contracts (PDF/DOCX) and get answers backed by verified, clickable quotes; compare versions; agentic research.",
+  "author": "Asim",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -11,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx scripts/migrate.ts",
+    "db:migrate": "node scripts/migrate.mjs",
     "storage:setup": "tsx --conditions=react-server scripts/setup-storage.ts",
     "storage:smoke": "tsx --conditions=react-server scripts/storage-smoke.ts",
     "fixtures": "tsx scripts/generate-fixtures.ts",

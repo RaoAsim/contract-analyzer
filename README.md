@@ -1,195 +1,147 @@
 # Contract Analyzer
 
-Ask questions about contracts and get answers backed by quotes that the app itself has checked against the document.
-
-- **Upload** PDF and Word (`.docx`) contracts. Unsupported, damaged, password-protected and scanned (image-only) files get a specific message. They are never saved as empty "ready" documents.
-- **Chat** with one contract. Answers stream in, **Stop** keeps the partial answer, and history is saved per document. Every quote is **verified against the document text by our code** before it is shown as a source. Invented or paraphrased quotes are marked *unverified*.
-- **Large documents (150+ pages).** The app reads the whole document when it fits the budget. Otherwise it uses excerpts plus an outline, and scans the full document for "is there / any / list" questions or when the excerpts don't hold the answer. Every answer shows how much of the document was read. The app **never says something is absent unless it read the whole document.**
-- **Click a quote** to scroll the viewer to it and highlight it. This works across line breaks, across page breaks (skipping headers and footers), and for text that occurs more than once, with a "1 of N" pager.
-- **Ask across several documents** (up to 5, tagged D1–D5). Each quote is verified against *its own* document only. **Compare two versions** clause by clause: each change gets a plain-English summary and a significance rating, with filtering by significance.
-- **Part C: agentic research** (Option 2). The model uses document tools (outline, search, sections, pages, exact find, clause list, full check) in a real multi-round loop. It shows live progress, runs under hard caps, and handles bad tool calls without failing. Its final answer goes through the same verifier.
-
-Live app: _not deployed yet, see [Not finished](#whats-finished-whats-not)_ · Demo video: _not recorded yet_
-
-**More detail:** [Technical overview and assignment coverage](docs/TECHNICAL.md) · [Manual test plan with expected answers](docs/TEST_PLAN.md)
-
-## Screenshots
-
-> These were captured with the local end-to-end harness ([Testing](#testing)). It uses real Postgres, the real UI and real pdf.js, but a **scripted stand-in for Gemini**, so the answer wording and the comparison summaries are placeholder text. Replace these with screenshots from the live app.
+Upload a contract (PDF or Word), ask questions about it, and get answers backed by **quotes that the app has checked against the document**. Click a quote to jump to that passage, highlighted.
 
 | | |
 |---|---|
-| Library, with a two-document selection | ![library](docs/screenshots/01-library.png) |
-| Verified quote highlighted on page 142 | ![p142](docs/screenshots/02-chat-highlight-p142.png) |
-| Highlight across a page break (header and footer skipped) | ![page break](docs/screenshots/03-highlight-page-break.png) |
-| DOCX: a verified quote and an invented one shown as *unverified* | ![docx](docs/screenshots/04-docx-verified-and-unverified.png) |
-| Research-agent timeline | ![agent](docs/screenshots/05-agent-timeline.png) |
-| Multi-document answer; clicking a D2 quote switches the viewer tab | ![multi](docs/screenshots/06-multi-document.png) |
-| Comparison with significance filters | ![compare](docs/screenshots/07-comparison.png) |
+| **Live app** | _add your Railway URL here_ |
+| **Demo video** | _add your Loom / YouTube (unlisted) link here_ |
+| **Short note** | [NOTE.md](NOTE.md) |
+| **More detail** | [Technical overview + assignment coverage](docs/TECHNICAL.md) · [Test plan with expected answers](docs/TEST_PLAN.md) |
 
-## Architecture
+## What it does
 
-```
-Browser (Next.js App Router, React)
-  │   REST (JSON) + streaming answers (text/event-stream over fetch POST)
-  ▼
-Next.js server: ONE Node.js process (runtime = 'nodejs')
-  ├─ Route handlers /api/*        thin: parse → call lib service → respond
-  ├─ Chat engine                  standard (full | retrieval | scan) and agent modes
-  │     └─ LLM client             Gemini via @google/genai (generateContent / generateContentStream)
-  ├─ Quote verifier               in-memory match indexes (LRU cache per document)
-  └─ Background worker            polls the `jobs` table; started from instrumentation.ts
-        ├─ job: process-document  (validate → extract → structure → chunk → index → clauses)
-        └─ job: compare-documents
-  ▼
-Supabase
-  ├─ Postgres: documents, document_pages, sections, chunks (tsvector), clauses,
-  │            conversations, conversation_documents, messages, comparisons, jobs
-  └─ Storage (private bucket "documents"): the original uploaded files
-```
+- **Upload.** Accepts PDF and DOCX; anything else is rejected with a clear message.
+  - Shows live processing progress ("Extracting text: page 83 of 149").
+  - A scanned PDF with no readable text is reported as such, never saved as an empty "ready" document.
+  - The library lists documents, with **Chat** and **Delete** on each one.
+- **Chat.** Answers stream in. **Stop** keeps what was written so far. History is saved per document and can be reopened.
+- **Verified quotes.**
+  - Every quote the AI writes is searched for in the document by our code before it is shown, allowing for differences in spaces, line breaks, quote marks and hyphenation.
+  - Found quotes become numbered sources ①; invented or paraphrased ones are marked **unverified**.
+  - If the answer isn't in the document, the app says so.
+- **Large documents (150+ pages).** Uses the most relevant sections, or reads the whole document when needed. Every answer shows how much of the document it was based on. The app never says a clause is missing unless it read everything.
+- **Citation highlighting.** Clicking a source scrolls the viewer to the passage and highlights it: across line breaks, across page breaks (headers and footers skipped), and with "1 of N" when the text appears more than once.
+- **Multi-document questions.** Select several documents and ask one question. The answer compares them, and each quote is tagged with its document (D1, D2…) and checked against that document only.
+- **Comparison.** Two versions are compared clause by clause. Each change gets a plain-English summary and a rating (critical, major, minor, cosmetic), with filters and sorting by significance.
+- **Part C: research agent (Option 2).**
+  - The AI decides what to look up using tools (outline, search, sections, pages, exact phrases, clause list, full check) over several rounds, and you see each step live.
+  - Hard limits on rounds, calls, tokens and time; bad tool calls are handled without crashing.
+  - The final answer's quotes are verified like every other answer.
+- **Installable (PWA)** on desktop and phone, with an offline page. Works on mobile: the chat is full-screen, and tapping a source opens the document at the highlighted passage.
 
-Key decisions:
+## Screenshots
 
-- **Supabase for data, Railway for the app.** The app needs a long-running process (background worker, multi-minute scans, streamed agent loops) and uploads up to 50 MB. Serverless function limits rule out Vercel for this.
-  - The server talks to Postgres **directly** (Drizzle over the Session pooler). Full-text search, `FOR UPDATE SKIP LOCKED` job claims and bulk inserts are awkward through the REST client.
-  - `@supabase/supabase-js` is used **only for Storage**, on the server, with the **secret key**.
-  - Every public table has **RLS enabled with no policies**, and `anon`/`authenticated` privileges are revoked, so the Data API exposes nothing. The app connects as the owner role.
-  - No login: the assignment assumes a single user.
-- **Gemini through the official Google Gen AI SDK** (`@google/genai`), using the stateless `generateContent` / `generateContentStream` API. We own conversation history, so each call carries its full context.
-  - Structured outputs use `responseJsonSchema`, generated from the same zod schemas that validate the reply.
-  - Agent tools use `parametersJsonSchema`.
-  - Model turns that contain function calls are replayed **verbatim**, so thought signatures survive.
-  - Thinking tokens count against `maxOutputTokens`. Every call therefore gets headroom (`GEMINI_THINKING_HEADROOM_TOKENS`) and a low thinking level by default.
-  - A `RECITATION` or safety stop becomes a visible notice rather than a silently truncated answer.
-- **Libraries:**
-  - pdf.js (`pdfjs-dist`) on the server for text and per-item geometry, and the same version in the browser via `react-pdf`, so the highlight geometry lines up.
-  - A custom OOXML parser for DOCX, so Word auto-numbering (`1.`, `1.1`, `(a)`) appears in the canonical text and in the rendered HTML (`mammoth` is the fallback).
-  - Postgres full-text search for retrieval.
-  - `diff` for redlines.
-- **Why Option 2 (agentic research) over Option 1 (tracked-change redlining):**
-  1. It builds on the core. The tools are thin wrappers over indexes we already build (sections, full-text search, page and character offsets), and the final answer goes through the same quote verifier.
-  2. Its correctness is testable with deterministic replay tests: caps, malformed tool calls and forced final answers.
-  3. Option 1 is mostly an OOXML engineering problem with no JS library to lean on. Correct `w:ins`/`w:del` across split runs, without disturbing numbering, styles or tables, was the bigger risk in the time available.
+**Library and upload**
+![Library and upload](screenshots/homepage.png)
 
-## Running locally
+**Chat: start screen with suggested questions**
+![Chat start](screenshots/Chat-intial-state.png)
 
-Requires Node ≥ 22.13.
+**Chat with verified quotes** (numbered sources, "Based on N% of the document", Sources list)
+![Chat with verified quotes](screenshots/Chat-responses.png)
 
-1. **Supabase.** Create a free project, or run one locally with the Supabase CLI (`supabase start`).
-   - *Connect → Session pooler* gives `DATABASE_URL` (port 5432).
-   - *Settings → API Keys* gives the **secret key** (`sb_secret_…`) as `SUPABASE_SECRET_KEY`. The legacy `service_role` JWT still works as `SUPABASE_SERVICE_ROLE_KEY`, but Supabase is retiring legacy keys.
-   - The private `documents` bucket is created automatically at server start (or with `npm run storage:setup`).
-2. **Gemini.** Create an API key in [Google AI Studio](https://aistudio.google.com/apikey) and set `GEMINI_API_KEY`. `GEMINI_MODEL` defaults to `gemini-flash-latest`. Pin a specific model id (for example a Flash-Lite model) for predictable cost.
+**Citation highlighting** (click a source → the passage is highlighted in the document)
+![Citation highlighting](screenshots/citation-highlight.png)
+
+**Document comparison** (significance ratings, plain-English summary, facts that changed)
+![Comparison](screenshots/compare-result.png)
+
+## How it works (short)
+
+- **Next.js** (App Router) runs as **one Node.js process**: the UI, the API routes, a background job worker, and the streamed answers.
+- **Supabase** stores the data: Postgres with full-text search and the job queue, plus Storage (a private bucket) for the original files.
+  - RLS is on for every table, and the public Data API roles have no access.
+  - The Supabase secret key is only used on the server.
+- **Gemini** (`@google/genai`) is the AI. The API key, model and (optional) base URL come from environment variables.
+
+See [docs/TECHNICAL.md](docs/TECHNICAL.md) for the full design and how each requirement is met.
+
+## Run it locally
+
+Needs Node 22.13 or newer, a free Supabase project and a Gemini API key.
+
+1. **Supabase:** go to **Connect → Session pooler** and copy the URI (port **5432**, user `postgres.<project-ref>`) into `DATABASE_URL`. Then go to **Settings → API Keys** and copy the **secret key** (`sb_secret_…`) into `SUPABASE_SECRET_KEY`.
+2. **Gemini:** create a key at [Google AI Studio](https://aistudio.google.com/apikey) and set `GEMINI_API_KEY`. `GEMINI_MODEL` defaults to `gemini-flash-latest`; `gemini-3.5-flash-lite` is cheap and fast.
 3. Run:
    ```bash
-   cp .env.example .env        # fill in the values above
-   npm install                 # also copies the pdf.js worker/cMaps/fonts into public/pdfjs
-   npm run db:migrate          # applies migrations and checks RLS is on for every table
-   npm run storage:smoke       # optional: upload → download → delete round-trip
-   npm run dev
+   cp .env.example .env       # fill in the values above
+   npm install
+   npm run db:migrate         # creates the tables and checks RLS
+   npm run dev                # http://localhost:3000
    ```
-4. After migrating, run **Advisors → Security Advisor** in the Supabase dashboard. It should report no issues for the `public` tables.
+4. Optional checks: `npm run storage:smoke` (Supabase Storage) and `npm run llm:smoke` (Gemini).
 
-Fixtures (regenerate with `npm run fixtures`) are committed in `tests/fixtures/`:
-- `long_msa.pdf` (149 pages; facts on pages 3, 71 and 142; a clause across a page break; running header and footer);
-- `msa_v1.docx` / `msa_v2.docx` (real Word numbering, with the v2 changes listed in the build plan);
-- `scanned.pdf`, `partial_scan.pdf`, `encrypted.pdf`, `corrupted.pdf`, `notes.txt`, `legacy.doc`.
+Test files are in `tests/fixtures/`:
+- `long_msa.pdf`: 149 pages, with facts on pages 3, 71 and 142;
+- `msa_v1.docx` / `msa_v2.docx`: two versions for comparison;
+- `scanned.pdf`, `partial_scan.pdf`, `encrypted.pdf`, `corrupted.pdf`, `notes.txt`, `legacy.doc`: for the error cases.
 
-## Deploying (Railway + Supabase)
+## Deploy (Railway)
 
-1. **Supabase:** create the project, then run `npm run db:migrate` locally with the production `DATABASE_URL`, or add it as Railway's pre-deploy command. The migrations:
-   - enable pgvector and RLS on every table;
-   - revoke Data API privileges;
-   - try to create the bucket (the app also creates it at startup).
-2. **Railway:** create a service from the repo with the default Node builder.
-   - Build command: `npm run build`. Start command: `npm run start` (`next start` binds to Railway's `PORT`).
-   - Set the variables from `.env.example`. None of them may use the `NEXT_PUBLIC_` prefix.
-   - Health check path: `/api/health` (checks the database, Storage bucket and worker).
-   - Run a **single instance**: the active-answer registry lives in memory.
-3. The server reads pdf.js cMaps and fonts from `node_modules/pdfjs-dist` at runtime. The default `next start` setup has them. If you switch to `output: 'standalone'`, copy them explicitly.
+**Why Railway:** the app needs a server that stays running, for the background worker, long document scans, streamed answers and 50 MB uploads. Railway runs it as a normal Node process. Serverless platforms cut these off.
+
+1. Create a Railway project, **Deploy from GitHub repo**, and pick this repo. `railway.json` already sets:
+   - build: `npm run build`;
+   - start: `npm run start`;
+   - pre-deploy: `npm run db:migrate`;
+   - health check: `/api/health`.
+2. **Region:** pick the one closest to your Supabase project. For Supabase in `ap-northeast-2` (Seoul), use Railway's **Southeast Asia (Singapore)**. Every answer makes many database round trips, so distance matters.
+3. **Variables:** add everything from `.env.example`. Don't use a `NEXT_PUBLIC_` prefix. Keep `RUN_WORKER=true` and `ENABLE_DEBUG_TOGGLES=false`.
+4. Keep **one replica**: running answers are tracked in memory.
+5. **Settings → Networking → Generate Domain** gives you the HTTPS URL. Open `/api/health`; it should show `"ok": true`.
 
 ## Configuration
 
-| Variable | Default | Purpose |
+| Variable | Default | What it's for |
 |---|---|---|
-| `DATABASE_URL` | required | Supabase **Session pooler** connection string |
-| `DATABASE_POOL_MAX` | `8` | Max DB connections (stay within the pooler's client limit) |
-| `SUPABASE_URL` / `SUPABASE_SECRET_KEY` | required | Storage access (server only; legacy `SUPABASE_SERVICE_ROLE_KEY` accepted) |
-| `SUPABASE_STORAGE_BUCKET` | `documents` | Private bucket for original files |
-| `GEMINI_API_KEY` | required | Google AI Studio API key |
-| `GEMINI_MODEL` | `gemini-flash-latest` | Any Gemini model with function calling and JSON output |
-| `GEMINI_THINKING_LEVEL` | `low` | `minimal`, `low`, `medium`, `high` or `default` (support varies by model) |
-| `GEMINI_THINKING_HEADROOM_TOKENS` | `2048` | Added to every call's output cap, because thinking tokens count against it |
-| `GEMINI_BASE_URL` | (empty) | Endpoint override (proxy or local test double) |
-| `CONTEXT_BUDGET_TOKENS` | `20000` | Max document tokens sent in one answer call. **Deliberately small**, so a 150-page contract always uses the retrieval/scan strategy even though Gemini's context window could hold it. |
-| `SCAN_WINDOW_TOKENS` / `SCAN_CONCURRENCY` | `8000` / `4` | Full-document scan window size and parallelism |
-| `AGENT_MAX_ROUNDS` / `AGENT_MAX_TOOL_CALLS` | `8` / `20` | Hard caps for the research agent |
-| `MAX_UPLOAD_MB` / `MAX_PAGES` | `50` / `500` | Upload limits (Supabase free plan: 50 MB per file) |
+| `DATABASE_URL` | required | Supabase **Session pooler** URI (port 5432) |
+| `DATABASE_POOL_MAX` | `8` | Max database connections |
+| `SUPABASE_URL`, `SUPABASE_SECRET_KEY` | required | Storage for the original files (server only; the legacy `SUPABASE_SERVICE_ROLE_KEY` also works) |
+| `SUPABASE_STORAGE_BUCKET` | `documents` | Private bucket (created automatically) |
+| `GEMINI_API_KEY` | required | Google AI Studio key |
+| `GEMINI_MODEL` | `gemini-flash-latest` | Any Gemini model with tool calling and JSON output |
+| `GEMINI_THINKING_LEVEL` | `low` | `minimal` / `low` / `medium` / `high` / `default` (`minimal` is fastest on Flash-Lite) |
+| `GEMINI_THINKING_HEADROOM_TOKENS` | `2048` | Extra output room, because thinking tokens count against the limit |
+| `GEMINI_BASE_URL` | (empty) | Optional endpoint override |
+| `CONTEXT_BUDGET_TOKENS` | `20000` | Max document text per AI request. Kept small on purpose, so long contracts use the large-document strategy. |
+| `SCAN_WINDOW_TOKENS`, `SCAN_CONCURRENCY` | `8000`, `4` | Full-document read: part size and parallelism |
+| `AGENT_MAX_ROUNDS`, `AGENT_MAX_TOOL_CALLS` | `8`, `20` | Research agent limits |
+| `MAX_UPLOAD_MB`, `MAX_PAGES` | `50`, `500` | Upload limits |
 | `RUN_WORKER` | `true` | Run the background worker in this process |
-| `ENABLE_DEBUG_TOGGLES` | `false` | Enables `?debugInjectFakeQuote=1`, which appends one invented quote so the *unverified* state can be shown |
+| `ENABLE_DEBUG_TOGGLES` | `false` | Allows `?debugInjectFakeQuote=1`, which adds one invented quote to show the "unverified" state |
 
 ## Testing
 
-- **`npm test`** runs about 130 unit tests (vitest) covering:
-  - quote normalisation and verification (the full must-verify / must-reject table, including paraphrases, changed amounts, protected words and elision order);
-  - the streaming quote parser, split at every character index;
-  - PDF extraction on the 149-page fixture: headers and footers, the cross-page clause, table-of-contents skip, facts on pages 3/71/142, and chunk boundaries;
-  - DOCX numbering;
-  - highlight boxes across pages and coverage maths;
-  - agent replay tests with a scripted fake LLM: an unknown tool, invalid JSON, invented arguments, a nonexistent section, duplicate calls, repeated failures, a model that never stops, and the token and call caps;
-  - the comparison invariants, facts and significance floors;
-  - Gemini message conversion (thought-signature replay, function-response grouping) and the JSON Schema clean-up.
-- **Queue integration tests** (`tests/integration`) run against a real Postgres when `DATABASE_URL` is set: atomic claims, lease-expiry recovery, and backoff.
-- **End-to-end harness** (`npm run e2e`) starts a real Postgres (PGlite over the wire protocol), a stand-in for Supabase Storage and a scripted stand-in for Gemini's REST API. It then runs migrations, builds and starts the app, and:
-  - runs 64 HTTP checks: uploads and rejections, live stages, all chat modes, stop, multi-document, agent, comparison and delete;
-  - runs 15 browser checks in your installed Chrome: real pdf.js rendering, a citation click that scrolls to page 142, a two-page highlight, the DOCX highlight, the unverified state, the agent timeline, the multi-document tab switch, comparison, and the mobile layout.
+- `npm test` runs about 150 unit tests: quote matching (all the must-accept and must-reject cases), the streaming quote parser, the 149-page PDF, DOCX numbering, highlight geometry, coverage, agent replay with a fake AI sending bad tool calls, comparison rules, Gemini message handling and question intent.
+- `npm run e2e` runs an end-to-end check with no real keys: a local Postgres and stand-ins for Storage and Gemini, the production build, HTTP checks, a server-restart recovery check and browser checks in Chrome.
+- A manual test plan, with the expected answers for the test files, is in [docs/TEST_PLAN.md](docs/TEST_PLAN.md).
 
-  It needs no real API keys. What it *can't* show is how well the real Gemini model answers. That needs the manual pass on the live app (build plan §18.3).
+## What's finished and what's not
 
-## What's finished, what's not
+**Finished:**
+- all of Part A (upload, chat, verified quotes, large documents);
+- all of Part B (citation highlighting, multi-document questions, comparison);
+- Part C Option 2 (the research agent).
 
-**Finished and verified locally (tests plus the e2e harness):** all of Parts A–C as listed at the top, plus the "background processing" extra. If the server is killed mid-processing, the job's lease expires, another worker claims it, and the document reaches *ready*. The harness demonstrates this.
+Also finished:
+- **Background processing:** a document being processed when the server restarts is picked up again and completes.
+- **PWA and mobile layout.**
 
-**Not finished yet:**
-- Not yet run against a real Supabase project and the real Gemini API from this environment, because no credentials were available. Every Gemini request shape and every Supabase call is exercised against local stand-ins that follow the documented REST protocols, but run the manual test pass after configuring `.env`.
-- Not deployed; no live URL, final screenshots or demo video yet.
-- Optional extras not built: a clause-list screen (a keyword clause index exists and powers the agent's `list_clauses` tool, but it isn't claimed as the extra), export, semantic (embedding) search, voice input, anonymisation, Arabic/RTL.
+**Not built (optional extras):**
+- a clause-list screen (a keyword clause index exists and is used by the agent);
+- export to PDF or Word;
+- semantic (embedding) search;
+- voice input;
+- anonymisation;
+- Arabic / right-to-left.
 
 **Known limitations:**
-- Multi-column PDFs can interleave columns: pdf.js content-stream order is kept, not re-sorted.
-- PDF highlight rectangles inside a text item use proportional character widths, so they are an approximation on justified text.
-- DOCX headers, footers, footnotes and comments are not indexed. Word numbering is approximated (common list formats, restarts and overrides).
-- No OCR: scanned pages are reported and always count as unread.
-- Comparison: a clause split in two, or two clauses merged, shows as modified plus added (or removed). A heavily reworded clause without a shared number or title may show as removed plus added.
-- Token counts for budgets use an OpenAI tokenizer as an estimate for Gemini, so budgets keep a margin.
-- One app instance only (the in-memory active-answer registry). A page refresh during generation leaves the partial answer saved as *interrupted*; it doesn't reconnect.
-
-## Note: how it works and where it can fail
-
-**Quote verification.**
-- Each document is reduced to one canonical text. PDF items and DOCX runs map to character offsets in it, and page headers and footers are detected and kept as "furniture" ranges.
-- The model's quote and the text are normalised with an offset map back to the original: Unicode NFKC; quote, dash and space variants; soft hyphens; de-hyphenation across line and page breaks; furniture skipped.
-- Matching tries four tiers in order: exact normalised → compact (letters and digits only, plus a numeric guard) → elided segments that must appear in order → a ≥ 0.95 fuzzy match. The fuzzy tier only allows one-character typos in long, non-numeric, non-"shall/may/not" words.
-- The displayed quote is always **the document's own text**, and the model's page numbers are never used.
-- In multi-document chats a quote is checked only against the document its tag names. A quote found in a different document is shown as unverified ("found in D2").
-- Where it can fail:
-  - PDFs whose fonts extract to the wrong characters;
-  - multi-column reading order;
-  - quotes spanning unusual table layouts;
-  - furniture misdetected on very short documents;
-  - near-identical boilerplate, where the highlight can land on the wrong occurrence (all occurrences are offered);
-  - the deliberate one-typo tolerance.
-
-**Large documents.**
-- The budget is deliberately small, so a 150-page contract always goes through retrieval: keyword search with query variants, phrase and section-number boosts and RRF fusion, plus the whole outline.
-- Exhaustive or "not found" questions trigger a map-verify-reduce scan of every part. Each finding is verified as it arrives.
-- Coverage is tracked per answer. Failed scan windows and scanned pages are always disclosed, and a server-side check adds a warning if an answer claims absence without full coverage.
-
-**Part C.**
-- Eight tools over the existing indexes.
-- A ledger of caps (rounds, tool calls, tokens and wall clock), checked *before* each call.
-- Every tool call gets a result (validation errors come back as structured results), duplicate calls hit a cache, and repeated failures are stopped.
-- When a cap is hit, the model is forced into a final answer, written with tools disabled, that states what it read.
-- The hardest part was making that forced answer honest about coverage and keeping models from guessing section numbers. The tools return "did you mean" hints, and the prompt forbids concluding absence without `check_entire_document`.
-
-**Next steps:** OCR, Option 1 redlining on top of the DOCX run model, reconnectable streams, clause split/merge detection in comparison, and an evaluation set of real long contracts.
+- Two-column PDFs can come out in the wrong reading order.
+- PDF highlights are approximate within a line on justified text.
+- Word headers, footers and footnotes aren't indexed.
+- No OCR: scanned pages are reported as unreadable.
+- In comparison, a clause split in two (or two merged) shows as modified plus added.
+- Token counts for Gemini are estimates, so budgets keep a margin.
+- Single server instance only.
+- Refreshing the page during an answer keeps the partial answer (marked "interrupted") but doesn't reconnect to it.
