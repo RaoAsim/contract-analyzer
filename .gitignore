@@ -47,3 +47,7 @@ next-env.d.ts
 
 # Supabase CLI local state
 /supabase/.temp/
+
+# Local planning notes and agent tooling (not part of the app)
+/contract-analyzer-build-plan.md
+/.agents/

@@ -119,29 +119,10 @@ Test files are in `tests/fixtures/`:
 
 ## What's finished and what's not
 
-**Finished:**
-- all of Part A (upload, chat, verified quotes, large documents);
-- all of Part B (citation highlighting, multi-document questions, comparison);
-- Part C Option 2 (the research agent).
+**Finished and working:**
+- **Part A:** upload and processing, chat with streaming and Stop, verified quotes, large documents.
+- **Part B:** citation highlighting, multi-document questions, document comparison.
+- **Part C:** Option 2, the research agent.
+- **Extras:** background processing, which survives a server restart; the installable PWA; the mobile layout.
 
-Also finished:
-- **Background processing:** a document being processed when the server restarts is picked up again and completes.
-- **PWA and mobile layout.**
-
-**Not built (optional extras):**
-- a clause-list screen (a keyword clause index exists and is used by the agent);
-- export to PDF or Word;
-- semantic (embedding) search;
-- voice input;
-- anonymisation;
-- Arabic / right-to-left.
-
-**Known limitations:**
-- Two-column PDFs can come out in the wrong reading order.
-- PDF highlights are approximate within a line on justified text.
-- Word headers, footers and footnotes aren't indexed.
-- No OCR: scanned pages are reported as unreadable.
-- In comparison, a clause split in two (or two merged) shows as modified plus added.
-- Token counts for Gemini are estimates, so budgets keep a margin.
-- Single server instance only.
-- Refreshing the page during an answer keeps the partial answer (marked "interrupted") but doesn't reconnect to it.
+**Not included:** the other optional extras from the brief (a clause-list screen, export, semantic search, voice input, anonymisation, Arabic). We chose to make Parts A–C solid rather than add unfinished extras.
