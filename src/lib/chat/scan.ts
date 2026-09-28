@@ -1,7 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { getConfig } from "@/lib/config";
-import { chatJson, isAbortError } from "@/lib/llm/client";
+import { chatJson } from "@/lib/llm/client";
 import { countTokens } from "@/lib/llm/tokens";
 import { allChunks } from "@/lib/retrieval/search";
 import { cleanSlice } from "@/lib/retrieval/context";
@@ -132,7 +132,7 @@ export async function scanDocuments(ctx: RunContext, docs: { tag: string; doc: D
           r.findings.push({ start: occ.start, end: occ.end, why: f.why, windowIndex: w.index });
         }
       } catch (err) {
-        if (ctx.signal.aborted || isAbortError(err)) return;
+        if (ctx.signal.aborted) return; // the user stopped: not a failure
         console.warn(`[scan] window ${w.index + 1}/${n} of ${r.doc.id} failed:`, err instanceof Error ? err.message : err);
         r.failedRanges.push({ pageStart: w.pageStart ?? 0, pageEnd: w.pageEnd ?? 0, reason: "analysis_failed", label: w.label });
       } finally {

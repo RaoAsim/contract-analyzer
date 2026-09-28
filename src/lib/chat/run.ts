@@ -59,6 +59,9 @@ export async function startAnswer(conversationId: string, question: string, opti
     mark,
   };
 
+  console.log(
+    `[chat] ${assistantMessageId.slice(0, 8)} start: options=${options.agent ? "agent" : options.thorough ? "whole-document" : "standard"} docs=${docs.map((d) => `${d.tag}:${d.data.tokenCount}tok`).join(",")} history=${history.turns} turns question=${question.length} chars`,
+  );
   writer.send("meta", {
     messageId: assistantMessageId,
     userMessageId,
@@ -80,6 +83,13 @@ export async function startAnswer(conversationId: string, question: string, opti
     try {
       await runChat(ctx);
       if (controller.signal.aborted) status = "stopped";
+      else if (!state.content.trim()) {
+        // Never save a silent blank answer: say what happened and offer a retry.
+        status = "error";
+        error = { code: "empty_answer", message: "The AI returned an empty answer. Please try again.", retryable: true };
+        console.warn(`[chat] ${assistantMessageId.slice(0, 8)} empty answer (mode=${state.mode}, llm calls=${state.usage.calls})`);
+        writer.send("error", error);
+      }
     } catch (err) {
       if (controller.signal.aborted) status = "stopped";
       else {

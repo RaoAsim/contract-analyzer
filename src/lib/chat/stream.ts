@@ -1,6 +1,6 @@
 import "server-only";
 import { getConfig } from "@/lib/config";
-import { isAbortError, streamChat } from "@/lib/llm/client";
+import { streamChat } from "@/lib/llm/client";
 import type { ChatMessage } from "@/lib/llm/llm.types";
 import type { RunContext, StreamOutcome } from "./chat.types";
 import { abandonedCitation, buildCitation, type CitationDoc } from "./citations";
@@ -116,7 +116,7 @@ export async function streamAnswer(
       ctx.state.usage.calls += 1;
       return { notFound: true, stopped: false, text: raw, finishReason: "escalated" };
     }
-    if (ctx.signal.aborted || isAbortError(err)) {
+    if (ctx.signal.aborted) {
       stopped = true;
       ctx.state.usage.calls += 1;
       parser.end("stopped");

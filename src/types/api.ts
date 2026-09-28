@@ -7,4 +7,6 @@ export type HealthResponse = {
   dbLatencyMs: number;
   storage: "ok" | "error";
   worker: "running" | "stopped" | "disabled";
+  /** Only with ?llm=1: Gemini reachable with the configured key and model. */
+  llm?: { ok: boolean; ms: number; error?: string };
 };

@@ -41,7 +41,8 @@ function ai(): GoogleGenAI {
     client = new GoogleGenAI({
       apiKey: cfg.GEMINI_API_KEY,
       httpOptions: {
-        timeout: 120_000,
+        // Overall cap only; first-token, stall and per-call limits are enforced below (and retried).
+        timeout: 600_000,
         // SDK retries off: we retry ourselves so the UI can show a "retrying" notice (§14.4).
         retryOptions: { attempts: 1 },
         ...(cfg.GEMINI_BASE_URL ? { baseUrl: cfg.GEMINI_BASE_URL } : {}),
@@ -68,7 +69,41 @@ export class LlmUnavailableError extends Error {
 }
 
 export function isAbortError(err: unknown): boolean {
-  return err instanceof Error && (err.name === "AbortError" || /abort/i.test(err.message));
+  return err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError" || /abort/i.test(err.message));
+}
+
+/** Time limits (ms). A streamed answer must start within FIRST_TOKEN and never stall longer than STALL. */
+const FIRST_TOKEN_MS = 45_000;
+const STALL_MS = 60_000;
+const CALL_MS = 60_000;
+const TIMEOUT_MESSAGE = "The AI provider didn't respond in time. Please try again.";
+
+class LlmTimeoutError extends Error {
+  constructor(what: string) {
+    super(what);
+    this.name = "LlmTimeoutError";
+  }
+}
+
+/** A per-attempt signal: the caller's signal (Stop) plus our own timer, which can be re-armed. */
+function attemptSignal(caller: AbortSignal | undefined, ms: number): { signal: AbortSignal; rearm: (ms: number) => void; timedOut: () => boolean; done: () => void } {
+  const own = new AbortController();
+  let fired = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const rearm = (t: number): void => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      fired = true;
+      own.abort(new LlmTimeoutError(`no response for ${Math.round(t / 1000)} s`));
+    }, t);
+  };
+  rearm(ms);
+  return {
+    signal: caller ? AbortSignal.any([caller, own.signal]) : own.signal,
+    rearm,
+    timedOut: () => fired,
+    done: () => timer && clearTimeout(timer),
+  };
 }
 
 function retryable(err: unknown): boolean {
@@ -107,14 +142,18 @@ export async function withRetry<T>(fn: () => Promise<T>, opts: Pick<CallOptions,
     try {
       return await fn();
     } catch (err) {
-      if (isAbortError(err) || opts.signal?.aborted) throw err;
-      if (attempt >= attempts || !retryable(err)) {
+      // Only the caller's own signal (Stop, disconnect, escalation) means "stop". Our timeouts retry.
+      if (opts.signal?.aborted) throw err;
+      const timeout = err instanceof LlmTimeoutError || isAbortError(err);
+      if (attempt >= attempts || !(timeout || retryable(err))) {
+        if (timeout) throw new LlmUnavailableError(TIMEOUT_MESSAGE, 504, err instanceof Error ? err.message : "timeout");
         if (err instanceof ApiError) throw new LlmUnavailableError(providerMessage(err), err.status, err.message);
         throw err;
       }
       const delay = retryAfterMs(err) ?? 1000 * 2 ** attempt + Math.floor(Math.random() * 400);
       const status = err instanceof ApiError ? err.status : undefined;
-      console.warn(`[llm] retry ${attempt + 1}/${attempts} in ${delay} ms (${status ?? (err instanceof Error ? err.message.slice(0, 80) : "error")})`);
+      const why = timeout ? "timeout" : (status ?? (err instanceof Error ? err.message.slice(0, 80) : "error"));
+      console.warn(`[llm] retry ${attempt + 1}/${attempts} in ${delay} ms (${why})`);
       opts.onRetry?.({ attempt: attempt + 1, delayMs: delay, status });
       await sleep(delay, opts.signal);
     }
@@ -250,6 +289,29 @@ function baseConfig(opts: CallOptions, visibleMax: number, defaultTemp: number):
   };
 }
 
+function logStart(label: string, estimatedInput: number): void {
+  const cfg = getConfig();
+  console.log(`[llm] ${label} start model=${modelName()} in≈${estimatedInput} thinking=${cfg.GEMINI_THINKING_LEVEL}`);
+}
+
+function logFailure(label: string, started: number, err: unknown): void {
+  const status = err instanceof ApiError || err instanceof LlmUnavailableError ? ` status=${err.status}` : "";
+  const detail = err instanceof LlmUnavailableError ? err.detail || err.message : err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  console.warn(`[llm] ${label} FAILED after ${Date.now() - started}ms${status}: ${detail.slice(0, 240)}`);
+}
+
+/** Connectivity check for /api/health?llm=1: model metadata (no generation, no token cost). */
+export async function pingModel(): Promise<{ ok: boolean; ms: number; error?: string }> {
+  const started = Date.now();
+  try {
+    await ai().models.get({ model: modelName(), config: { abortSignal: AbortSignal.timeout(15_000) } });
+    return { ok: true, ms: Date.now() - started };
+  } catch (err) {
+    const msg = err instanceof ApiError ? `${err.status}: ${providerMessage(err)}` : err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    return { ok: false, ms: Date.now() - started, error: msg.slice(0, 200) };
+  }
+}
+
 function logCall(label: string, usage: LlmUsage, ms: number, extra = ""): void {
   // Model, tokens and timing only — never prompts, document text or keys (§17).
   console.log(`[llm] ${label} model=${modelName()} in=${usage.inputTokens} out=${usage.outputTokens} ${ms}ms${extra}`);
@@ -274,17 +336,36 @@ export async function streamChat(messages: ChatMessage[], onDelta: (t: string) =
   let text = "";
   let last: GenerateContentResponse | undefined;
   let usageChunk: GenerateContentResponse | undefined;
-  const stream = await withRetry(
-    () =>
-      ai().models.generateContentStream({
-        model: modelName(),
-        contents,
-        config: { ...baseConfig(opts, 1800, 0.1), systemInstruction },
-      }),
-    opts,
-  );
+  let chunks = 0;
+  let firstAt = 0;
+  logStart(opts.label, estimateMessagesTokens(messages));
+  let guard = attemptSignal(opts.signal, FIRST_TOKEN_MS);
+  let stream: AsyncGenerator<GenerateContentResponse>;
+  try {
+    stream = await withRetry(async () => {
+      guard.done();
+      guard = attemptSignal(opts.signal, FIRST_TOKEN_MS); // fresh timer for each attempt
+      try {
+        return await ai().models.generateContentStream({
+          model: modelName(),
+          contents,
+          config: { ...baseConfig(opts, 1800, 0.1), systemInstruction, abortSignal: guard.signal },
+        });
+      } catch (err) {
+        throw guard.timedOut() ? new LlmTimeoutError(`no response headers within ${FIRST_TOKEN_MS / 1000} s`) : err;
+      }
+    }, opts);
+  } catch (err) {
+    guard.done();
+    if (!opts.signal?.aborted) logFailure(opts.label, started, err);
+    throw err;
+  }
   try {
     for await (const chunk of stream) {
+      // Any chunk (thoughts included) proves the model is alive: re-arm the stall timer.
+      guard.rearm(STALL_MS);
+      chunks++;
+      if (!firstAt) firstAt = Date.now() - started;
       const delta = visibleText(chunk.candidates?.[0]?.content?.parts);
       if (delta) {
         text += delta;
@@ -294,13 +375,21 @@ export async function streamChat(messages: ChatMessage[], onDelta: (t: string) =
       if (chunk.usageMetadata) usageChunk = chunk;
     }
   } catch (err) {
+    const stalled = guard.timedOut() && !opts.signal?.aborted;
+    if (opts.signal?.aborted) console.log(`[llm] ${opts.label} cancelled after ${Date.now() - started}ms (${chunks} chunks)`);
+    else logFailure(opts.label, started, stalled ? new LlmTimeoutError(`stream stalled for ${STALL_MS / 1000} s after ${chunks} chunks`) : err);
+    if (stalled) throw new LlmUnavailableError(TIMEOUT_MESSAGE, 504, "stream stalled");
     if (err instanceof ApiError) throw new LlmUnavailableError(providerMessage(err), err.status, err.message);
     throw err;
   } finally {
-    const u = usageOf(usageChunk, estimateMessagesTokens(messages), countTokens(text));
-    logCall(opts.label, u, Date.now() - started, opts.signal?.aborted ? " (stopped)" : "");
+    guard.done();
   }
-  return { text, usage: usageOf(usageChunk, estimateMessagesTokens(messages), countTokens(text)), finishReason: finishOf(last) };
+  const u = usageOf(usageChunk, estimateMessagesTokens(messages), countTokens(text));
+  logCall(opts.label, u, Date.now() - started, ` first=${firstAt}ms chunks=${chunks} finish=${finishOf(last) ?? "none"}${opts.signal?.aborted ? " (stopped)" : ""}`);
+  if (chunks === 0 || (!text && finishOf(last) !== "stop")) {
+    console.warn(`[llm] ${opts.label} returned no text (chunks=${chunks}, finish=${finishOf(last) ?? "none"}, block=${last?.promptFeedback?.blockReason ?? "-"})`);
+  }
+  return { text, usage: u, finishReason: finishOf(last) };
 }
 
 /** Non-streaming JSON output constrained by the zod schema (responseJsonSchema), validated; one retry with the error. */
@@ -311,15 +400,22 @@ export async function chatJson<T>(messages: ChatMessage[], schema: z.ZodType<T>,
   for (let attempt = 0; attempt < 2; attempt++) {
     const started = Date.now();
     const { systemInstruction, contents } = toGemini(convo);
-    const resp = await withRetry(
-      () =>
-        ai().models.generateContent({
+    const resp = await withRetry(() => {
+      const g = attemptSignal(opts.signal, CALL_MS);
+      return ai()
+        .models.generateContent({
           model: modelName(),
           contents,
-          config: { ...baseConfig(opts, 1200, 0), systemInstruction, responseMimeType: "application/json", responseJsonSchema: jsonSchema },
-        }),
-      opts,
-    );
+          config: { ...baseConfig(opts, 1200, 0), systemInstruction, responseMimeType: "application/json", responseJsonSchema: jsonSchema, abortSignal: g.signal },
+        })
+        .catch((err: unknown) => {
+          throw g.timedOut() ? new LlmTimeoutError(`no response within ${CALL_MS / 1000} s`) : err;
+        })
+        .finally(g.done);
+    }, opts).catch((err: unknown) => {
+      logFailure(opts.label, started, err);
+      throw err;
+    });
     const content = visibleText(resp.candidates?.[0]?.content?.parts);
     const u = usageOf(resp, estimateMessagesTokens(convo), countTokens(content));
     total.inputTokens += u.inputTokens;
@@ -345,9 +441,10 @@ export async function chatJson<T>(messages: ChatMessage[], schema: z.ZodType<T>,
 export async function chatWithTools(messages: ChatMessage[], tools: ToolDef[], opts: CallOptions): Promise<ToolCallResult> {
   const started = Date.now();
   const { systemInstruction, contents } = toGemini(messages);
-  const resp = await withRetry(
-    () =>
-      ai().models.generateContent({
+  const resp = await withRetry(() => {
+    const g = attemptSignal(opts.signal, CALL_MS);
+    return ai()
+      .models.generateContent({
         model: modelName(),
         contents,
         config: {
@@ -355,10 +452,17 @@ export async function chatWithTools(messages: ChatMessage[], tools: ToolDef[], o
           systemInstruction,
           tools: toolDeclarations(tools),
           toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
+          abortSignal: g.signal,
         },
-      }),
-    opts,
-  );
+      })
+      .catch((err: unknown) => {
+        throw g.timedOut() ? new LlmTimeoutError(`no response within ${CALL_MS / 1000} s`) : err;
+      })
+      .finally(g.done);
+  }, opts).catch((err: unknown) => {
+    logFailure(opts.label, started, err);
+    throw err;
+  });
   const parts = resp.candidates?.[0]?.content?.parts ?? [];
   let n = 0;
   const tool_calls: ToolCall[] = parts

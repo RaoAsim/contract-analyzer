@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
+import { pingModel } from "@/lib/llm/client";
 import { workerStatus } from "@/lib/jobs/worker";
 import { bucketReachable } from "@/lib/storage/supabase";
 import type { HealthResponse } from "@/types/api";
@@ -23,7 +24,7 @@ async function check(fn: () => Promise<unknown>): Promise<"ok" | "error"> {
 }
 
 /** Database reachable + Storage bucket reachable + worker loop alive. Never echoes secrets or error details. */
-export async function GET(): Promise<NextResponse<HealthResponse>> {
+export async function GET(req: Request): Promise<NextResponse<HealthResponse>> {
   let configOk = true;
   let runWorker = true;
   try {
@@ -37,5 +38,7 @@ export async function GET(): Promise<NextResponse<HealthResponse>> {
   const storage = configOk ? await check(() => bucketReachable()) : "error";
   const worker: HealthResponse["worker"] = runWorker ? workerStatus() : "disabled";
   const ok = database === "ok" && storage === "ok" && worker !== "stopped";
-  return NextResponse.json({ ok, database, dbLatencyMs, storage, worker }, { status: ok ? 200 : 503 });
+  // Optional: /api/health?llm=1 also checks that Gemini is reachable with this key and model.
+  const llm = configOk && new URL(req.url).searchParams.get("llm") === "1" ? await pingModel() : undefined;
+  return NextResponse.json({ ok, database, dbLatencyMs, storage, worker, ...(llm ? { llm } : {}) }, { status: ok ? 200 : 503 });
 }

@@ -7,7 +7,7 @@ import { finish, notice } from "@/lib/chat/finish";
 import { answerSystemPrompt, documentsBlock } from "@/lib/chat/prompts";
 import { scanDocuments } from "@/lib/chat/scan";
 import { streamAnswer } from "@/lib/chat/stream";
-import { chatWithTools, estimateMessagesTokens, isAbortError, isToolsRejection, type streamChat } from "@/lib/llm/client";
+import { chatWithTools, estimateMessagesTokens, isToolsRejection, LlmUnavailableError, type streamChat } from "@/lib/llm/client";
 import type { ChatMessage } from "@/lib/llm/llm.types";
 import { countTokens } from "@/lib/llm/tokens";
 import { cleanSlice } from "@/lib/retrieval/context";
@@ -136,11 +136,18 @@ export async function runAgent(ctx: RunContext, deps: AgentDeps = {}): Promise<v
         onRetry: ({ attempt }) => ctx.emit("notice", { code: "RETRYING", text: `The AI provider is busy — retrying (attempt ${attempt + 1})…` }),
       });
     } catch (err) {
-      if (ctx.signal.aborted || isAbortError(err)) break;
+      if (ctx.signal.aborted) break;
       if (round === 1 && isToolsRejection(err) && deps.fallback) {
         notice(ctx, { code: "TOOLS_UNSUPPORTED", text: "This model doesn't support tool use; answered with standard mode instead." });
         await deps.fallback(ctx);
         return;
+      }
+      if (round > 1 && err instanceof LlmUnavailableError) {
+        // Keep what the research found; the final answer states what was read.
+        console.warn(`[agent] round ${round} failed (${err.detail || err.message}); answering from the research so far`);
+        notice(ctx, { code: "AGENT_CAP", text: "A research step failed (the AI provider didn't respond). Answering from what was found so far." });
+        outcome = "timeout";
+        break;
       }
       throw err;
     }
