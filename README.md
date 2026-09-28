@@ -81,15 +81,16 @@ Test files are in `tests/fixtures/`:
 
 **Why Railway:** the app needs a server that stays running, for the background worker, long document scans, streamed answers and 50 MB uploads. Railway runs it as a normal Node process. Serverless platforms cut these off.
 
-1. Create a Railway project, **Deploy from GitHub repo**, and pick this repo. `railway.json` already sets:
-   - build: `npm run build`;
-   - start: `npm run start`;
-   - pre-deploy: `npm run db:migrate`;
-   - health check: `/api/health`.
-2. **Region:** pick the one closest to your Supabase project. For Supabase in `ap-northeast-2` (Seoul), use Railway's **Southeast Asia (Singapore)**. Every answer makes many database round trips, so distance matters.
-3. **Variables:** add everything from `.env.example`. Don't use a `NEXT_PUBLIC_` prefix. Keep `RUN_WORKER=true` and `ENABLE_DEBUG_TOGGLES=false`.
-4. Keep **one replica**: running answers are tracked in memory.
-5. **Settings → Networking → Generate Domain** gives you the HTTPS URL. Open `/api/health`; it should show `"ok": true`.
+1. **New project → Deploy from GitHub repo**, then pick this repo and the `main` branch.
+2. **Settings → Scale:** choose the region closest to your Supabase project. For Supabase in Seoul (`ap-northeast-2`), pick **Southeast Asia (Singapore)**. Keep **1 replica**, and leave **Serverless off**: the worker must keep running.
+3. **Settings → Build:** set Build Command to `npm run build`.
+4. **Settings → Deploy:**
+   - Start Command: `npm run start`
+   - Pre-deploy step: `npm run db:migrate`
+   - Healthcheck Path: `/api/health`
+5. **Variables:** add everything from `.env.example` with your values, plus `PORT=3000`. Don't use a `NEXT_PUBLIC_` prefix, and set `ENABLE_DEBUG_TOGGLES=false`.
+6. **Settings → Networking → Generate Domain** with target port **3000**.
+7. Open `https://<your-domain>/api/health`; it should show `"ok": true`.
 
 ## Configuration
 
