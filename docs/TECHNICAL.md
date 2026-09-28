@@ -121,6 +121,11 @@ chat   → full text | excerpts + outline | full scan | overview | agent
 
 - **Jobs:** a 2-minute lease renewed by a heartbeat; failed jobs retry with backoff; permanent and temporary failures are handled differently; the document can be retried from the library.
 - **Answers:** a question and its answer are created before the AI call and saved every 1.5 s while streaming. An answer cut off by a server restart is marked *interrupted*.
+- **Slow AI replies:**
+  - If Gemini hasn't replied within 10 s (25 s with higher thinking levels), the same request is sent again alongside it, and whichever replies first is used.
+  - A request gets up to 20 s (45 s) to start replying, and a streamed answer must never pause for more than 60 s. After that, the call is retried once.
+  - If it still fails, the user sees a clear error with **Try again**, never a blank answer.
+  - While the user waits, the status line says what is happening at each step ("Reading the relevant sections (§4, §9)…", "Picking the exact wording to quote…").
 - **Send and Stop:**
   - Send reacts instantly: the question appears and Send becomes Stop, even while the chat is still being created;
   - a double submit is ignored, and a double-click can't hit Stop;

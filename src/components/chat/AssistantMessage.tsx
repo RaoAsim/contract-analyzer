@@ -23,6 +23,22 @@ const MODE: Record<AnswerMode, { label: string; icon: typeof BookOpen; hint: str
   agent: { label: "Research agent", icon: Bot, hint: "The AI chose what to read using document tools." },
 };
 
+const HINT_EVERY_S = 4;
+const SLOW_AFTER_S = 25;
+
+/**
+ * The live status line: the step the server reported, then its follow-up hints one by one (the last
+ * one stays). A step with no progress that runs very long says so plainly instead of looping.
+ */
+function liveLabel(m: UiMessage, now: number): string {
+  const s = m.live?.status;
+  if (!s) return m.content ? "Writing the answer…" : "Thinking…";
+  const secs = Math.max(0, (now - (m.live?.statusAt ?? now)) / 1000);
+  if (!s.progress && !m.content && secs >= SLOW_AFTER_S) return "Still working — this is taking longer than usual…";
+  const lines = [s.text, ...(s.hints ?? [])];
+  return lines[Math.min(lines.length - 1, Math.floor(secs / HINT_EVERY_S))]!;
+}
+
 type Props = {
   message: UiMessage;
   docName: (docId: string) => string;
@@ -44,6 +60,7 @@ export function AssistantMessage({ message: m, docName, multi, onOpenCitation, o
   const open = (c: Citation): void => onOpenCitation(m.id, c);
   const mode = m.mode ? MODE[m.mode] : null;
   const elapsed = Math.max(0, Math.round((now - (m.live?.startedAt ?? now)) / 1000));
+  const label = liveLabel(m, now);
 
   return (
     <article className="rounded-xl border bg-white shadow-xs" aria-busy={running}>
@@ -70,7 +87,11 @@ export function AssistantMessage({ message: m, docName, multi, onOpenCitation, o
         {running && (
           <div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground" role="status" aria-live="polite">
             <Loader2 className="size-4 animate-spin text-primary" aria-hidden="true" />
-            <span>{m.live?.status?.text ?? (m.content ? "Writing the answer…" : "Thinking…")}</span>
+            {/* Screen readers get the step once; the rotating follow-up lines are visual only. */}
+            <span className="sr-only">{m.live?.status?.text ?? "Thinking…"}</span>
+            <span key={label} aria-hidden="true" className="animate-in fade-in duration-500">
+              {label}
+            </span>
             {m.live?.status?.progress && (
               <span className="font-mono text-xs tabular-nums">
                 {m.live.status.progress.done}/{m.live.status.progress.total}

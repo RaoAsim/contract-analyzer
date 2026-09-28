@@ -7,6 +7,7 @@ import type { ChatMessage } from "@/lib/llm/llm.types";
 import { fullContext, overviewContext, retrievalContext, topSectionsList } from "@/lib/retrieval/context";
 import { planQueries } from "@/lib/retrieval/search";
 import type { QueryPlan } from "@/lib/retrieval/search.types";
+import type { SseStatus } from "@/types/sse";
 import { compressNumbers } from "@/lib/text/ranges";
 import type { DocContext, RunContext, StreamOutcome } from "./chat.types";
 import type { CitationDoc } from "./citations";
@@ -43,6 +44,28 @@ async function topicFor(ctx: RunContext, plan: QueryPlan): Promise<string> {
   }
 }
 
+/** "Reading …" for the answer step: what the AI was given, then what it does next. */
+function answerStatus(contexts: DocContext[], overview?: boolean): SseStatus {
+  const multi = contexts.length > 1;
+  let sections = contexts.map((c) => (c.mode === "retrieval" ? c.noteForModel : "")).filter(Boolean).join("; ");
+  if (sections.length > 48) {
+    // Keep the status short: cut at the last full section label.
+    const cut = sections.lastIndexOf(",", 46);
+    sections = `${sections.slice(0, cut > 0 ? cut : 46)} and more`;
+  }
+  const what = overview
+    ? "the outline and the opening of each section"
+    : contexts.some((c) => c.mode === "scan")
+      ? `what was found across the whole document${multi ? "s" : ""}`
+      : contexts.every((c) => c.mode === "full")
+        ? multi ? `all ${contexts.length} documents` : "the whole document"
+        : `the relevant sections${sections ? ` (${sections})` : ""}`;
+  return {
+    text: `Reading ${what}…`,
+    hints: [multi ? "Comparing the documents…" : "Working out the answer…", "Picking the exact wording to quote…", "Quotes will be checked word-for-word against the document…"],
+  };
+}
+
 /** Stream an answer over prepared document contexts (FULL / RETRIEVAL / SCAN-reduce). */
 async function answer(
   ctx: RunContext,
@@ -53,7 +76,7 @@ async function answer(
   const system: ChatMessage = { role: "system", content: answerSystemPrompt(coverageText, contexts.length > 1, opts.overview) };
   const block = documentsBlock(contexts.map((c) => ({ tag: c.tag, name: c.doc.name, coverageAttr: c.coverageAttr, body: c.body })));
   const citationDocs: CitationDoc[] = contexts.map((c) => ({ tag: c.tag, data: c.doc, contextRanges: c.contextRanges }));
-  ctx.emit("status", { text: "Writing the answer…" });
+  ctx.emit("status", answerStatus(contexts, opts.overview));
   const outcome = await streamAnswer(ctx, [system, ...ctx.history, userTurn(ctx.question, block)], citationDocs, {
     escalateOnNotFound: opts.escalate,
     notFoundPrefix: opts.notFoundPrefix,
@@ -155,7 +178,7 @@ export async function runStandard(ctx: RunContext): Promise<void> {
 
   let plan: QueryPlan = { queries: [], sections: [], topic: null };
   if (large.length > 0) {
-    ctx.emit("status", { text: "Finding relevant sections…" });
+    ctx.emit("status", { text: "Finding relevant sections…", hints: ["Working out what to search for…", "Searching the document for matching clauses…", "Ranking the best-matching passages…"] });
     const p = await planQueries(ctx.question, topSectionsList(large[0]!.data), ctx.signal);
     plan = p.plan;
     ctx.mark?.("plan");

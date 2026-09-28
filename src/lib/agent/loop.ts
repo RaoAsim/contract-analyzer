@@ -6,7 +6,7 @@ import { docCoverage, sectionsLabel } from "@/lib/chat/coverage";
 import { finish, notice } from "@/lib/chat/finish";
 import { answerSystemPrompt, documentsBlock } from "@/lib/chat/prompts";
 import { scanDocuments } from "@/lib/chat/scan";
-import { streamAnswer } from "@/lib/chat/stream";
+import { SLOW_STATUS, streamAnswer } from "@/lib/chat/stream";
 import { chatWithTools, estimateMessagesTokens, isToolsRejection, LlmUnavailableError, type streamChat } from "@/lib/llm/client";
 import type { ChatMessage } from "@/lib/llm/llm.types";
 import { countTokens } from "@/lib/llm/tokens";
@@ -126,13 +126,19 @@ export async function runAgent(ctx: RunContext, deps: AgentDeps = {}): Promise<v
       break;
     }
     ledger.rounds = round;
-    ctx.emit("status", { text: round === 1 ? "Planning research…" : "Deciding what to read next…" });
+    ctx.emit(
+      "status",
+      round === 1
+        ? { text: "Planning research…", hints: ["Looking at the document outline…", "Choosing what to look up first…"] }
+        : { text: "Deciding what to read next…", hints: ["Reviewing what's been found so far…"] },
+    );
 
     let resp: Awaited<ReturnType<typeof chatWithTools>>;
     try {
       resp = await chat(msgs, tools, {
         signal: ctx.signal,
         label: "agent-round",
+        onSlow: () => ctx.emit("status", SLOW_STATUS),
         onRetry: ({ attempt }) => ctx.emit("notice", { code: "RETRYING", text: `The AI provider is busy — retrying (attempt ${attempt + 1})…` }),
       });
     } catch (err) {
@@ -232,7 +238,7 @@ export async function runAgent(ctx: RunContext, deps: AgentDeps = {}): Promise<v
   }
 
   // ANSWER PHASE — streaming, tools disabled, same parser + verifier as the standard modes.
-  ctx.emit("status", { text: "Writing the answer from the research…" });
+  ctx.emit("status", { text: "Writing the answer from the research…", hints: ["Picking the exact wording to quote…", "Quotes will be checked word-for-word against the document…"] });
   const coverage = perDocCoverage();
   const budget = Math.max(cfg.CONTEXT_BUDGET_TOKENS, 24_000);
   const perDocBudget = Math.floor(budget / ctx.docs.length);

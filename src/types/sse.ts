@@ -10,7 +10,8 @@ export type SseMeta = {
   historyIncluded?: { turns: number; dropped: number };
 };
 
-export type SseStatus = { text: string; progress?: { done: number; total: number } };
+/** `hints`: follow-up lines the UI shows in turn while this step is still running. */
+export type SseStatus = { text: string; progress?: { done: number; total: number }; hints?: string[] };
 export type SseToolCall = { callId: string; name: string; label: string; args: unknown; round: number };
 export type SseToolResult = { callId: string; ok: boolean; summary: string; ms: number; error?: string };
 export type SseText = { delta: string };

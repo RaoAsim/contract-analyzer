@@ -65,7 +65,7 @@ export function useChatStream(onFinished: (conversationId: string) => void): {
       messageId.current = null;
       setLive({
         user: blank(`tmp-u-${Date.now()}`, "user", content),
-        assistant: { ...blank(`tmp-a-${Date.now()}`, "assistant"), live: { phase: "pending", pending: [], startedAt: Date.now(), status: { text: "Starting…" } } },
+        assistant: { ...blank(`tmp-a-${Date.now()}`, "assistant"), live: { phase: "pending", pending: [], startedAt: Date.now(), status: { text: "Starting…", hints: ["Loading the document…"] }, statusAt: Date.now() } },
       });
 
       let conversationId = "";
@@ -101,7 +101,7 @@ export function useChatStream(onFinished: (conversationId: string) => void): {
               break;
             }
             case "status":
-              update((a) => ({ ...a, live: { ...a.live!, status: data as SseEventMap["status"] } }));
+              update((a) => ({ ...a, live: { ...a.live!, status: data as SseEventMap["status"], statusAt: Date.now() } }));
               break;
             case "text":
               update((a) => ({ ...a, content: a.content + (data as SseEventMap["text"]).delta }));

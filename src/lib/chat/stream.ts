@@ -6,6 +6,12 @@ import type { RunContext, StreamOutcome } from "./chat.types";
 import { abandonedCitation, buildCitation, type CitationDoc } from "./citations";
 import { QuoteStreamParser } from "./quoteStreamParser";
 
+/** Shown when the AI hasn't replied yet and a backup request was sent (client.ts hedging). */
+export const SLOW_STATUS = {
+  text: "The AI is slower than usual — sent a second request…",
+  hints: ["Still waiting for the AI to reply…", "Whichever request answers first will be used…"],
+};
+
 const FAKE_QUOTE = ' <quote doc="D1">The Supplier shall provide unlimited free support to the Customer forever.</quote>';
 
 function addUsage(ctx: RunContext, u: { inputTokens: number; outputTokens: number; calls: number }): void {
@@ -35,6 +41,7 @@ export async function streamAnswer(
   let escalated = false;
   const defaultTag = citationDocs[0]?.tag ?? "D1";
   let raw = "";
+  let writing = false;
   const parser = new QuoteStreamParser({
     defaultTag,
     nextId: ctx.nextCitationId,
@@ -53,6 +60,10 @@ export async function streamAnswer(
           break;
         case "text":
           if (escalated) return;
+          if (!writing && e.text.trim()) {
+            writing = true;
+            ctx.emit("status", { text: "Writing the answer…", hints: ["Checking each quote against the document as it's written…"] });
+          }
           ctx.state.content += e.text;
           ctx.emit("text", { delta: e.text });
           break;
@@ -104,6 +115,7 @@ export async function streamAnswer(
         label: opts.label,
         maxTokens: opts.maxTokens,
         onRetry: ({ attempt }) => ctx.emit("notice", { code: "RETRYING", text: `The AI provider is busy — retrying (attempt ${attempt + 1})…` }),
+        onSlow: () => ctx.emit("status", SLOW_STATUS),
       },
     );
     addUsage(ctx, r.usage);

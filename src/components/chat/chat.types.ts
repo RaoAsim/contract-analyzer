@@ -4,6 +4,8 @@ import type { SseStatus } from "@/types/sse";
 export type LiveInfo = {
   phase: "pending" | "streaming" | "complete" | "stopped" | "error";
   status?: SseStatus;
+  /** When the current status arrived (its hints rotate from here). */
+  statusAt?: number;
   pending: string[];
   startedAt: number;
 };

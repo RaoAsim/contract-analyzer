@@ -72,11 +72,19 @@ export function isAbortError(err: unknown): boolean {
   return err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError" || /abort/i.test(err.message));
 }
 
-/** Time limits (ms). A streamed answer must start within FIRST_TOKEN and never stall longer than STALL. */
-const FIRST_TOKEN_MS = 45_000;
+/**
+ * Time limits (ms) per request. `hedge`: no reply by then → send the same request again alongside
+ * and use whichever answers first (Gemini latency has a long tail). `limit`: give up on a request.
+ * Streams must also never stall longer than STALL. Low thinking replies fast, so its limits are tighter.
+ */
 const STALL_MS = 60_000;
-const CALL_MS = 60_000;
 const TIMEOUT_MESSAGE = "The AI provider didn't respond in time. Please try again.";
+
+function limits(kind: "stream" | "call"): { hedge: number; limit: number } {
+  const fast = ["minimal", "low"].includes(getConfig().GEMINI_THINKING_LEVEL);
+  if (kind === "stream") return fast ? { hedge: 10_000, limit: 20_000 } : { hedge: 25_000, limit: 45_000 };
+  return fast ? { hedge: 20_000, limit: 60_000 } : { hedge: 40_000, limit: 90_000 };
+}
 
 class LlmTimeoutError extends Error {
   constructor(what: string) {
@@ -85,8 +93,10 @@ class LlmTimeoutError extends Error {
   }
 }
 
-/** A per-attempt signal: the caller's signal (Stop) plus our own timer, which can be re-armed. */
-function attemptSignal(caller: AbortSignal | undefined, ms: number): { signal: AbortSignal; rearm: (ms: number) => void; timedOut: () => boolean; done: () => void } {
+type Guard = { signal: AbortSignal; rearm: (ms: number) => void; timedOut: () => boolean; cancel: () => void; done: () => void };
+
+/** A per-request signal: the caller's signal (Stop) plus our own timer, which can be re-armed. */
+function attemptSignal(caller: AbortSignal | undefined, ms: number): Guard {
   const own = new AbortController();
   let fired = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -102,8 +112,67 @@ function attemptSignal(caller: AbortSignal | undefined, ms: number): { signal: A
     signal: caller ? AbortSignal.any([caller, own.signal]) : own.signal,
     rearm,
     timedOut: () => fired,
+    // The other request of a hedged pair won: drop this one (not a timeout).
+    cancel: () => {
+      if (timer) clearTimeout(timer);
+      own.abort(new DOMException("Superseded", "AbortError"));
+    },
     done: () => timer && clearTimeout(timer),
   };
+}
+
+type Hedged<T> = { value: T; guard: Guard; backup: boolean; ms: number };
+
+/**
+ * One attempt = a request, plus a backup copy if the first hasn't replied within `hedge` ms. The
+ * first to succeed wins and the other is cancelled; the attempt fails only when every copy failed.
+ * `run` must resolve once the reply has started (the first stream chunk, or the whole response).
+ */
+function hedged<T>(label: string, opts: Pick<CallOptions, "signal" | "onSlow">, kind: "stream" | "call", run: (signal: AbortSignal) => Promise<T>): Promise<Hedged<T>> {
+  const { hedge, limit } = limits(kind);
+  const t0 = Date.now();
+  return new Promise((resolve, reject) => {
+    const guards: Guard[] = [];
+    let pending = 0;
+    let settled = false;
+    let hedgeTimer: ReturnType<typeof setTimeout> | undefined;
+    const start = (backup: boolean): void => {
+      const guard = attemptSignal(opts.signal, limit);
+      guards.push(guard);
+      pending++;
+      const sent = Date.now();
+      void run(guard.signal).then(
+        (value) => {
+          if (settled) return guard.cancel();
+          settled = true;
+          clearTimeout(hedgeTimer);
+          for (const g of guards) if (g !== guard) g.cancel();
+          if (backup) console.log(`[llm] ${label} backup request won (replied ${Date.now() - sent}ms after it was sent)`);
+          resolve({ value, guard, backup, ms: Date.now() - t0 });
+        },
+        (err: unknown) => {
+          guard.done();
+          pending--;
+          const e = guard.timedOut() ? new LlmTimeoutError(`no reply within ${limit / 1000} s`) : err;
+          if (settled) return;
+          if (guards.length > 1 && pending > 0) {
+            console.warn(`[llm] ${label} ${backup ? "backup" : "first"} request failed (${e instanceof Error ? e.message.slice(0, 80) : "error"}); waiting for the other`);
+            return;
+          }
+          settled = true;
+          clearTimeout(hedgeTimer);
+          reject(e);
+        },
+      );
+    };
+    start(false);
+    hedgeTimer = setTimeout(() => {
+      if (settled || opts.signal?.aborted) return;
+      console.warn(`[llm] ${label} no reply after ${hedge / 1000} s; sending a backup request`);
+      opts.onSlow?.();
+      start(true);
+    }, hedge);
+  });
 }
 
 function retryable(err: unknown): boolean {
@@ -138,14 +207,18 @@ function providerMessage(err: ApiError): string {
 
 /** 408/429/5xx → retry 3 times with exponential backoff (1 s, 2 s, 4 s) + jitter, honouring retryDelay. */
 export async function withRetry<T>(fn: () => Promise<T>, opts: Pick<CallOptions, "signal" | "onRetry">, attempts = 3): Promise<T> {
+  let timeouts = 0;
   for (let attempt = 0; ; attempt++) {
+    const t0 = Date.now();
     try {
       return await fn();
     } catch (err) {
       // Only the caller's own signal (Stop, disconnect, escalation) means "stop". Our timeouts retry.
       if (opts.signal?.aborted) throw err;
       const timeout = err instanceof LlmTimeoutError || isAbortError(err);
-      if (attempt >= attempts || !(timeout || retryable(err))) {
+      // An attempt that timed out already waited on two requests (hedging): retry that only once.
+      if (timeout) timeouts++;
+      if (attempt >= attempts || timeouts > 1 || !(timeout || retryable(err))) {
         if (timeout) throw new LlmUnavailableError(TIMEOUT_MESSAGE, 504, err instanceof Error ? err.message : "timeout");
         if (err instanceof ApiError) throw new LlmUnavailableError(providerMessage(err), err.status, err.message);
         throw err;
@@ -153,7 +226,7 @@ export async function withRetry<T>(fn: () => Promise<T>, opts: Pick<CallOptions,
       const delay = retryAfterMs(err) ?? 1000 * 2 ** attempt + Math.floor(Math.random() * 400);
       const status = err instanceof ApiError ? err.status : undefined;
       const why = timeout ? "timeout" : (status ?? (err instanceof Error ? err.message.slice(0, 80) : "error"));
-      console.warn(`[llm] retry ${attempt + 1}/${attempts} in ${delay} ms (${why})`);
+      console.warn(`[llm] retry ${attempt + 1}/${attempts} in ${delay} ms (attempt ${attempt + 1} failed after ${Date.now() - t0}ms: ${why})`);
       opts.onRetry?.({ attempt: attempt + 1, delayMs: delay, status });
       await sleep(delay, opts.signal);
     }
@@ -337,35 +410,37 @@ export async function streamChat(messages: ChatMessage[], onDelta: (t: string) =
   let last: GenerateContentResponse | undefined;
   let usageChunk: GenerateContentResponse | undefined;
   let chunks = 0;
-  let firstAt = 0;
+  let attempts = 0;
   logStart(opts.label, estimateMessagesTokens(messages));
-  let guard = attemptSignal(opts.signal, FIRST_TOKEN_MS);
-  let stream: AsyncGenerator<GenerateContentResponse>;
+  type Opened = { it: AsyncIterator<GenerateContentResponse>; first: IteratorResult<GenerateContentResponse> };
+  let won: Hedged<Opened>;
   try {
-    stream = await withRetry(async () => {
-      guard.done();
-      guard = attemptSignal(opts.signal, FIRST_TOKEN_MS); // fresh timer for each attempt
-      try {
-        return await ai().models.generateContentStream({
+    won = await withRetry(() => {
+      attempts++;
+      // Resolves on the first chunk, so a request that connects but never streams counts as slow too.
+      return hedged(opts.label, opts, "stream", async (signal): Promise<Opened> => {
+        const stream = await ai().models.generateContentStream({
           model: modelName(),
           contents,
-          config: { ...baseConfig(opts, 1800, 0.1), systemInstruction, abortSignal: guard.signal },
+          config: { ...baseConfig(opts, 1800, 0.1), systemInstruction, abortSignal: signal },
         });
-      } catch (err) {
-        throw guard.timedOut() ? new LlmTimeoutError(`no response headers within ${FIRST_TOKEN_MS / 1000} s`) : err;
-      }
+        const it = stream[Symbol.asyncIterator]();
+        return { it, first: await it.next() };
+      });
     }, opts);
   } catch (err) {
-    guard.done();
     if (!opts.signal?.aborted) logFailure(opts.label, started, err);
     throw err;
   }
+  const { guard } = won;
+  const firstAt = Date.now() - started;
+  const { it } = won.value;
   try {
-    for await (const chunk of stream) {
+    for (let r = won.value.first; !r.done; r = await it.next()) {
+      const chunk = r.value;
       // Any chunk (thoughts included) proves the model is alive: re-arm the stall timer.
       guard.rearm(STALL_MS);
       chunks++;
-      if (!firstAt) firstAt = Date.now() - started;
       const delta = visibleText(chunk.candidates?.[0]?.content?.parts);
       if (delta) {
         text += delta;
@@ -385,7 +460,8 @@ export async function streamChat(messages: ChatMessage[], onDelta: (t: string) =
     guard.done();
   }
   const u = usageOf(usageChunk, estimateMessagesTokens(messages), countTokens(text));
-  logCall(opts.label, u, Date.now() - started, ` first=${firstAt}ms chunks=${chunks} finish=${finishOf(last) ?? "none"}${opts.signal?.aborted ? " (stopped)" : ""}`);
+  const via = `${attempts > 1 ? ` attempt=${attempts} (this attempt first=${won.ms}ms)` : ""}${won.backup ? " via=backup" : ""}`;
+  logCall(opts.label, u, Date.now() - started, ` first=${firstAt}ms${via} chunks=${chunks} finish=${finishOf(last) ?? "none"}${opts.signal?.aborted ? " (stopped)" : ""}`);
   if (chunks === 0 || (!text && finishOf(last) !== "stop")) {
     console.warn(`[llm] ${opts.label} returned no text (chunks=${chunks}, finish=${finishOf(last) ?? "none"}, block=${last?.promptFeedback?.blockReason ?? "-"})`);
   }
@@ -400,20 +476,21 @@ export async function chatJson<T>(messages: ChatMessage[], schema: z.ZodType<T>,
   for (let attempt = 0; attempt < 2; attempt++) {
     const started = Date.now();
     const { systemInstruction, contents } = toGemini(convo);
-    const resp = await withRetry(() => {
-      const g = attemptSignal(opts.signal, CALL_MS);
-      return ai()
-        .models.generateContent({
-          model: modelName(),
-          contents,
-          config: { ...baseConfig(opts, 1200, 0), systemInstruction, responseMimeType: "application/json", responseJsonSchema: jsonSchema, abortSignal: g.signal },
-        })
-        .catch((err: unknown) => {
-          throw g.timedOut() ? new LlmTimeoutError(`no response within ${CALL_MS / 1000} s`) : err;
-        })
-        .finally(g.done);
-    }, opts).catch((err: unknown) => {
-      logFailure(opts.label, started, err);
+    const resp = await withRetry(
+      () =>
+        hedged(opts.label, opts, "call", (signal) =>
+          ai().models.generateContent({
+            model: modelName(),
+            contents,
+            config: { ...baseConfig(opts, 1200, 0), systemInstruction, responseMimeType: "application/json", responseJsonSchema: jsonSchema, abortSignal: signal },
+          }),
+        ).then((h) => {
+          h.guard.done();
+          return h.value;
+        }),
+      opts,
+    ).catch((err: unknown) => {
+      if (!opts.signal?.aborted) logFailure(opts.label, started, err);
       throw err;
     });
     const content = visibleText(resp.candidates?.[0]?.content?.parts);
@@ -441,26 +518,27 @@ export async function chatJson<T>(messages: ChatMessage[], schema: z.ZodType<T>,
 export async function chatWithTools(messages: ChatMessage[], tools: ToolDef[], opts: CallOptions): Promise<ToolCallResult> {
   const started = Date.now();
   const { systemInstruction, contents } = toGemini(messages);
-  const resp = await withRetry(() => {
-    const g = attemptSignal(opts.signal, CALL_MS);
-    return ai()
-      .models.generateContent({
-        model: modelName(),
-        contents,
-        config: {
-          ...baseConfig(opts, 1200, 0.1),
-          systemInstruction,
-          tools: toolDeclarations(tools),
-          toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
-          abortSignal: g.signal,
-        },
-      })
-      .catch((err: unknown) => {
-        throw g.timedOut() ? new LlmTimeoutError(`no response within ${CALL_MS / 1000} s`) : err;
-      })
-      .finally(g.done);
-  }, opts).catch((err: unknown) => {
-    logFailure(opts.label, started, err);
+  const resp = await withRetry(
+    () =>
+      hedged(opts.label, opts, "call", (signal) =>
+        ai().models.generateContent({
+          model: modelName(),
+          contents,
+          config: {
+            ...baseConfig(opts, 1200, 0.1),
+            systemInstruction,
+            tools: toolDeclarations(tools),
+            toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
+            abortSignal: signal,
+          },
+        }),
+      ).then((h) => {
+        h.guard.done();
+        return h.value;
+      }),
+    opts,
+  ).catch((err: unknown) => {
+    if (!opts.signal?.aborted) logFailure(opts.label, started, err);
     throw err;
   });
   const parts = resp.candidates?.[0]?.content?.parts ?? [];

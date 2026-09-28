@@ -37,6 +37,8 @@ export type CallOptions = {
   maxTokens?: number;
   temperature?: number;
   onRetry?: RetryHook;
+  /** The reply is slow and a backup request was sent (for a "still working" status). */
+  onSlow?: () => void;
   /** Label for logs only ("answer", "scan-map", "agent-round"…). */
   label: string;
 };
